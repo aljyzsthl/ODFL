@@ -1,13 +1,13 @@
-r"""claude_engine.py - PO extraction by the Claude API.
+r"""claude_engine.py - PO extraction by the DeepSeek API.
 
 Replaces the 7,200-line local engine (now `CodeExtract/_legacy/engine.py`).
 Where the old engine rasterised, OCR'd, found header rows, built column bounds
-and assigned cells by geometry, this module sends the document to Claude and
-gets back the ordered line items as JSON.
+and assigned cells by geometry, this module renders PDF pages to images, sends
+them to DeepSeek and gets back the ordered line items as JSON.
 
 WHAT DID NOT CHANGE - the two rules the project is built on
 ----------------------------------------------------------
-1. **Extraction proposes, master data decides.** Claude's material code is a
+1. **Extraction proposes, master data decides.** DeepSeek's material code is a
    *candidate*. `code_rules.BackboneIndex` looks it up in
    `material_codes_reference.csv`; anything it cannot confirm is moved to
    `review` and kept out of `records`. A code that does not exist must never
@@ -38,26 +38,22 @@ ENTRY POINTS
 The result dict has the same shape the dashboard has always consumed
 (docs/HANDOVER.md 4.7); read every field with `.get()`.
 
-ENDPOINT ("SEA Claude API Guide")
---------------------------------
-This talks to the SEA private inference endpoint, NOT api.anthropic.com. It
-implements the standard Messages API, but two things differ and both are
-configurable:
+ENDPOINT (DeepSeek local-test branch)
+------------------------------------
+This talks to DeepSeek's Anthropic-compatible Messages API:
 
-    base_url    claude_config.json > Settings screen > $ANTHROPIC_BASE_URL
-                default https://seadev-claude.sec.samsung.net:8081
-    auth token  Settings screen ("PO reading") > $ANTHROPIC_AUTH_TOKEN >
-                $ANTHROPIC_API_KEY > CodeExtract/.api_key
+    base_url    Settings screen > $DEEPSEEK_BASE_URL > claude_config.json
+                default https://api.deepseek.com/anthropic
+    API key     Settings screen > $DEEPSEEK_API_KEY >
+                CodeExtract/.deepseek_api_key
 
     POST {base_url}/v1/messages
-    Authorization: Bearer <token>        <- not x-api-key
-    anthropic-version: 2023-06-01
-    content-type: application/json
+    x-api-key: <DeepSeek API key>
 
-⚠️ The token is NOT shipped with this program. It has to be pasted in once.
-
-Standard library only - no pip package, so a locked-down corporate PC needs
-nothing installed to run this.
+DeepSeek does not accept Anthropic PDF `document` blocks. Plain PDFs are
+rendered locally to JPEG page images with PyMuPDF and sent to the
+vision-capable `deepseek-flash` model. DRM documents recovered as text keep
+the text route. The API key is never shipped with the program.
 """
 
 import base64
@@ -81,48 +77,45 @@ SETTINGS_PATH = HERE.parent / "config" / "settings.json"
 
 API_VERSION = "2023-06-01"
 
-# The endpoint this project talks to. It is NOT api.anthropic.com: it is the
-# SEA private inference endpoint from "SEA Claude API Guide", which implements
-# the standard Messages API but authenticates differently (see `auth_header`).
+# DeepSeek exposes an Anthropic-compatible Messages API. Keeping that wire
+# shape lets the existing tool schema and response parser stay unchanged.
 #
 # Both of the two things the guide asks you to configure are settings, and both
 # are overridable in three places (first one found wins):
 #
-#   base_url   config/settings.json claude.base_url (Settings screen)
-#              > $ANTHROPIC_BASE_URL > claude_config.json > DEFAULT_BASE_URL
-#   auth token config/settings.json claude.api_key (Settings screen)
-#              > $ANTHROPIC_AUTH_TOKEN > $ANTHROPIC_API_KEY > .api_key
+#   base_url   config/settings.json deepseek.base_url
+#              > $DEEPSEEK_BASE_URL > claude_config.json > DEFAULT_BASE_URL
+#   API key    config/settings.json deepseek.api_key
+#              > $DEEPSEEK_API_KEY > .deepseek_api_key
 #
 # The Settings screen wins over both environment variables, for both values:
-# a token pasted once has to keep working on a machine that also has a stale
-# $ANTHROPIC_AUTH_TOKEN exported in its profile.
+# a key pasted once has to keep working on a machine that also has a stale
+# environment variable exported in its profile.
 #
 # ⚠️ THE TOKEN IS NOT INCLUDED ANYWHERE - IT HAS TO BE PASTED IN. Paste it on
-# the Settings screen under "PO reading", or set $ANTHROPIC_AUTH_TOKEN. Without
+# the Settings screen under "PO reading", or set $DEEPSEEK_API_KEY. Without
 # it every PO comes back with zero codes and no error, which is why
 # `_load_module` refuses to run without one.
-DEFAULT_BASE_URL = "https://seadev-claude.sec.samsung.net:8081"
+DEFAULT_BASE_URL = "https://api.deepseek.com/anthropic"
 MESSAGES_PATH = "/v1/messages"
 
 # Exactly the IDs the guide lists, with the guide's own notes. Anything else is
 # not offered by this endpoint, and a wrong ID comes back as a 400 that says
 # nothing useful - so the list is published in the error message instead.
 KNOWN_MODELS = {
-    "claude-sonnet-5": "Default / general-purpose (1M context)",
-    "claude-opus-5": "Higher-capability tier (1M context)",
-    "claude-sonnet-4-6": "Previous-generation Sonnet (1M context)",
-    "claude-haiku-4-5": "Fastest / lowest-latency tier",
+    "deepseek-flash": "Vision-capable model required for PDF page images",
 }
 
 DEFAULTS = {
-    # The guide's "Default / general-purpose" model, and the one it shows in
-    # both examples. Available: claude-sonnet-5, claude-opus-5,
-    # claude-sonnet-4-6, claude-haiku-4-5.
-    "model": "claude-sonnet-5",
+    "model": "deepseek-flash",
     "base_url": DEFAULT_BASE_URL,
     "max_tokens": 8000,
     "timeout_sec": 180,
-    "max_pdf_bytes": 20_000_000,     # request limit is 32 MB
+    "max_pdf_bytes": 20_000_000,
+    "max_pdf_pages": 100,
+    "max_request_bytes": 45_000_000, # below DeepSeek's 48 MiB body limit
+    "pdf_dpi": 144,
+    "jpeg_quality": 82,
     "max_input_chars": 200_000,      # recovered text (DRM path)
     "prompt_version": 1,
 }
@@ -146,7 +139,7 @@ def load_config() -> dict:
             cfg.update(json.load(f))
     except Exception:
         pass
-    chosen = str((_claude_settings() or {}).get("model") or "").strip()
+    chosen = str((_deepseek_settings() or {}).get("model") or "").strip()
     if chosen and chosen in KNOWN_MODELS:
         cfg["model"] = chosen
     return cfg
@@ -194,33 +187,34 @@ def _user_settings() -> dict:
         return {}
 
 
-def _claude_settings() -> dict:
-    """The `claude` block of config/settings.json - what the Settings screen writes."""
-    block = _user_settings().get("claude") or {}
+def _deepseek_settings() -> dict:
+    """The isolated `deepseek` block written by this test branch."""
+    block = _user_settings().get("deepseek") or {}
     return block if isinstance(block, dict) else {}
 
 
 def api_key() -> str:
-    """The auth token, in the order the Settings screen promises.
+    """The DeepSeek API key, in the order the Settings screen promises.
 
     The stored setting comes FIRST. It used to be read after the environment
     variables, which contradicted the contract at the top of this file and
-    quietly defeated the screen: a machine with a stale $ANTHROPIC_AUTH_TOKEN
+    quietly defeated the screen: a machine with a stale environment key
     exported in its profile ignored every token pasted in Settings, so the paste
     looked like it had not been saved. An environment variable is now what it
     says on the box - a fallback for a machine nobody configures by hand.
     """
-    block = _claude_settings()
+    block = _deepseek_settings()
     for field in ("api_key", "token", "auth_token"):
         k = str(block.get(field) or "").strip()
         if k:
             return k
-    for env in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"):
+    for env in ("DEEPSEEK_API_KEY",):
         k = (os.environ.get(env) or "").strip()
         if k:
             return k
     try:
-        return (HERE / ".api_key").read_text(encoding="utf-8").strip()
+        return (HERE / ".deepseek_api_key").read_text(
+            encoding="utf-8").strip()
     except Exception:
         return ""
 
@@ -228,7 +222,7 @@ def api_key() -> str:
 def base_url() -> str:
     """The endpoint root, without a trailing slash.
 
-    Order: Settings screen > $ANTHROPIC_BASE_URL > claude_config.json >
+    Order: Settings screen > $DEEPSEEK_BASE_URL > claude_config.json >
     DEFAULT_BASE_URL. The config file is the *shipped default*, so it sits
     below the two places an operator actually edits - otherwise a value in the
     file would silently pin the address and the Settings box would look broken.
@@ -237,8 +231,8 @@ def base_url() -> str:
     and trimmed back to the root.
     """
     url = ""
-    sources = (_claude_settings().get("base_url"),
-               os.environ.get("ANTHROPIC_BASE_URL"),
+    sources = (_deepseek_settings().get("base_url"),
+               os.environ.get("DEEPSEEK_BASE_URL"),
                load_config().get("base_url"))
     for candidate in sources:
         if str(candidate or "").strip():
@@ -256,13 +250,8 @@ def messages_url() -> str:
 
 
 def auth_header(key: str = "") -> dict:
-    """The one header that differs from the public API.
-
-    The guide is explicit: `Authorization: Bearer <token>`, "auth_token, not
-    api_key". Sending `x-api-key` here would be rejected - which is exactly the
-    mistake this function exists to prevent.
-    """
-    return {"Authorization": "Bearer " + (key or api_key())}
+    """DeepSeek's Anthropic-compatible endpoint accepts `x-api-key`."""
+    return {"x-api-key": key or api_key()}
 
 
 def status_summary() -> dict:
@@ -496,19 +485,19 @@ def _plain_error(code: int, detail: str, url: str) -> str:
     low = d.lower()
     if code in (401, 403):
         return (f"the endpoint rejected the key (HTTP {code}) at {url}. "
-                "Check the token on the Settings screen - it is sent as "
-                "'Authorization: Bearer <key>', not as x-api-key. " + d)
+                "Check the DeepSeek key on the Settings screen - it is sent "
+                "as 'x-api-key'. " + d)
     if code == 404:
         return (f"no API at {url} (HTTP 404). The base URL is probably wrong - "
-                "it should be the endpoint root from the API guide, with "
+                "it should normally be https://api.deepseek.com/anthropic, "
+                "with "
                 "/v1/messages added by this program. " + d)
     if code == 400 and ("model" in low or "not found" in low):
         return (f"the endpoint does not offer that model (HTTP 400). "
                 f"Available: {', '.join(KNOWN_MODELS)}. " + d)
     if code == 400 and ("document" in low or "pdf" in low or "media" in low):
-        return ("the endpoint refused the PDF itself (HTTP 400). This "
-                "deployment may accept text only - report it, because without "
-                "PDF input a scanned PO cannot be read. " + d)
+        return ("the endpoint refused a rendered PDF page image (HTTP 400). "
+                "Use deepseek-flash and verify the image limits. " + d)
     if code == 413:
         return ("the document is larger than the endpoint accepts (HTTP 413). "
                 "Split the PO or raise max_pdf_bytes only if the server "
@@ -531,7 +520,7 @@ def _post(payload: dict, cfg: dict, url: str = "", key: str = "",
         raise RuntimeError(
             "no API key stored. Paste one on the Settings screen under "
             '"PO reading", or set the environment variable '
-            "ANTHROPIC_AUTH_TOKEN.")
+            "DEEPSEEK_API_KEY.")
 
     url = url or messages_url()
     body = json.dumps(payload).encode("utf-8")
@@ -663,7 +652,7 @@ def _call(content_blocks: list, cfg: dict) -> dict:
     for block in data.get("content") or []:
         if block.get("type") == "tool_use":
             return block.get("input") or {}
-    raise RuntimeError("the Claude API returned no line items")
+    raise RuntimeError("the DeepSeek API returned no line items")
 
 
 def _pdf_blocks(path: str, cfg: dict) -> list:
@@ -675,12 +664,58 @@ def _pdf_blocks(path: str, cfg: dict) -> list:
         raise RuntimeError(
             f"this PDF is {len(data) // 1024} KB; the limit for one document "
             f"is {limit // 1024} KB")
-    return [
-        {"type": "document",
-         "source": {"type": "base64", "media_type": "application/pdf",
-                    "data": base64.standard_b64encode(data).decode("ascii")}},
-        {"type": "text", "text": _USER_PDF},
-    ]
+    try:
+        import pymupdf as fitz
+    except ImportError:
+        raise RuntimeError(
+            "PyMuPDF is required for the DeepSeek test branch. Run "
+            "'py -m pip install -r requirements.txt'.") from None
+
+    try:
+        doc = fitz.open(stream=data, filetype="pdf")
+    except Exception as e:
+        raise RuntimeError(f"this PDF could not be rendered: {e}") from None
+
+    page_limit = int(cfg.get("max_pdf_pages", DEFAULTS["max_pdf_pages"]))
+    if doc.page_count > page_limit:
+        pages = doc.page_count
+        doc.close()
+        raise RuntimeError(
+            f"this PDF has {pages} pages; the local-test limit is "
+            f"{page_limit}")
+
+    dpi = max(72, min(200, int(cfg.get("pdf_dpi", DEFAULTS["pdf_dpi"]))))
+    quality = max(50, min(95, int(cfg.get(
+        "jpeg_quality", DEFAULTS["jpeg_quality"]))))
+    matrix = fitz.Matrix(dpi / 72.0, dpi / 72.0)
+    blocks = [{"type": "text", "text": _USER_PDF}]
+    encoded_bytes = 0
+    try:
+        for page in doc:
+            pix = page.get_pixmap(matrix=matrix, alpha=False,
+                                  colorspace=fitz.csRGB)
+            jpg = pix.tobytes("jpeg", jpg_quality=quality)
+            encoded = base64.standard_b64encode(jpg).decode("ascii")
+            encoded_bytes += len(encoded)
+            blocks.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": encoded,
+                },
+            })
+    finally:
+        doc.close()
+
+    request_limit = int(cfg.get(
+        "max_request_bytes", DEFAULTS["max_request_bytes"]))
+    if encoded_bytes > request_limit:
+        raise RuntimeError(
+            f"the rendered pages are {encoded_bytes // 1024} KB; the "
+            f"DeepSeek inline-request limit for this branch is "
+            f"{request_limit // 1024} KB")
+    return blocks
 
 
 def _text_blocks(text: str, cfg: dict) -> list:
@@ -895,7 +930,7 @@ def _records_from(payload: dict, source_file: str, po_number: str) -> list:
             "po_number": po_number,
             "page": page,
             "source_file": source_file,
-            "match_type": "claude",
+            "match_type": "deepseek",
             "extracted_at": datetime.now().isoformat(timespec="seconds"),
         })
     return out
@@ -1341,7 +1376,7 @@ def _finalise(payload: dict, source_file: str, cache_path: Path, md5_hash: str,
         "po_numbers": [o["po_number"] for o in orders if o["po_number"]],
         "order_count": len(orders),
         "customer": customer_name or "",
-        "extraction_mode": "claude",
+        "extraction_mode": "deepseek",
         **top,
         "records": records,
         "review": review,
@@ -1393,7 +1428,7 @@ def extract_material_codes(pdf_path: str, force: bool = False,
             tick(100, "Loaded from cache")
             return cached
 
-    tick(20, "Sending the PDF to Claude...")
+    tick(20, "Rendering pages and sending them to DeepSeek...")
     payload = _call(_pdf_blocks(pdf_path, cfg), cfg)
     tick(80, "Checking the reading against the Material Code list...")
     result = _finalise(payload, source_file, cache_path, md5_hash,

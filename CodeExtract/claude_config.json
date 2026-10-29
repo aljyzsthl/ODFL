@@ -1,13 +1,17 @@
 {
-  "_note": "PO extraction settings, per 'SEA Claude API Guide'. The two parameters the guide asks for are base_url (below) and auth_token. THE TOKEN IS NOT IN THIS FILE - paste it on the Settings screen under 'PO reading', or set $ANTHROPIC_AUTH_TOKEN (or $ANTHROPIC_API_KEY). Never commit it.",
-  "_base_url_note": "The endpoint root from the guide. /v1/messages is appended by the program, so paste the root only - a value that already ends in /v1/messages is accepted and trimmed. Overridable here, then on the Settings screen, then by $ANTHROPIC_BASE_URL.",
-  "_model_note": "Available model IDs (from the guide): claude-sonnet-5 (default), claude-opus-5, claude-sonnet-4-6, claude-haiku-4-5. sonnet-5 is the guide's default and is ample for reading a PO: material codes are confirmed against the Material Code list afterwards, so a cheaper model degrades speed, not correctness of the code. Switch to claude-opus-5 only if line items themselves are being missed.",
-  "_pdf_note": "PDF input is sent as a base64 document block (no anthropic-beta header). Request limit is 32 MB / 600 pages; max_pdf_bytes is set below that so an oversized file is refused with a readable message instead of an HTTP 413.",
-  "base_url": "https://seadev-claude.sec.samsung.net:8081",
-  "model": "claude-sonnet-5",
+  "_note": "DeepSeek local-test branch. THE API KEY IS NOT IN THIS FILE - paste it on Settings > API or set $DEEPSEEK_API_KEY. Never commit it.",
+  "_base_url_note": "DeepSeek's Anthropic-compatible endpoint root. /v1/messages is appended by the program. Overridable on the Settings screen or with $DEEPSEEK_BASE_URL.",
+  "_model_note": "deepseek-flash is required because it supports image input. PDFs are rendered locally to JPEG pages before the request; DeepSeek does not accept PDF document blocks.",
+  "_pdf_note": "Requires PyMuPDF. PDF pages are rendered at pdf_dpi and sent as inline JPEG image blocks. The encoded request is capped below DeepSeek's 48 MiB request-body limit.",
+  "base_url": "https://api.deepseek.com/anthropic",
+  "model": "deepseek-flash",
   "max_tokens": 8000,
   "timeout_sec": 180,
   "max_pdf_bytes": 20000000,
+  "max_pdf_pages": 100,
+  "max_request_bytes": 45000000,
+  "pdf_dpi": 144,
+  "jpeg_quality": 82,
   "max_input_chars": 200000,
-  "prompt_version": 1
+  "prompt_version": 2
 }

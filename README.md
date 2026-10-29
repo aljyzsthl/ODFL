@@ -11,10 +11,14 @@ unit price from the attached PO PDFs, and produces the ERP Standard Order Upload
 > `CodeExtract\` before processing production orders. Never commit
 > `config\settings.json` or customer documents.
 
-**POs are read by the Claude API.** Each PDF attachment (and a DRM file's
-recovered text) is sent to the **SEA private inference endpoint**
-(`https://seadev-claude.sec.samsung.net:8081`, per the "SEA Claude API Guide")
-and the ordered line items come back as JSON. **One attachment may hold several
+> **DeepSeek test branch:** this branch renders every PDF page locally to JPEG
+> and sends the images to DeepSeek's Anthropic-compatible API. It is intended
+> for local evaluation; do not use production customer POs without approval.
+
+**POs are read by the DeepSeek API.** Each PDF attachment is rendered locally
+with PyMuPDF and the page images (or a DRM file's recovered text) are sent to
+`https://api.deepseek.com/anthropic/v1/messages`. The ordered line items come
+back as JSON. **One attachment may hold several
 POs** — each is read as its own order, with its own number, printed total,
 delivery date and address, and every written row keeps the ones it was printed
 on. Everything else - Outlook, the customer master, the ERP file - runs on the PC. **Master data still decides**: a
@@ -25,13 +29,13 @@ never reaches ERP, so the model's output is a proposal, not an instruction. See
 ⚠️ **A purchase order leaves the PC on every extraction.** That is the trade
 for not maintaining a 7,200-line local PDF engine (retired into
 `CodeExtract/_legacy/`). Two things must be configured, both on the Settings
-screen under **PO reading** — or via `$ANTHROPIC_BASE_URL` /
-`$ANTHROPIC_AUTH_TOKEN`:
+screen under **PO reading** — or via `$DEEPSEEK_BASE_URL` /
+`$DEEPSEEK_API_KEY`:
 
 - **the endpoint** — defaults to the address above, so normally leave it blank;
-- **the auth token** — the key you were assigned. It is sent as
-  `Authorization: Bearer …`, not `x-api-key`. **No token is shipped with this
-  code; it has to be pasted in once.**
+- **the API key** — the DeepSeek key assigned to the tester. It is sent as
+  `x-api-key`. **No key is shipped with this code; it has to be pasted in
+  once.**
 
 **A customer is identified by the DOMAIN — nothing else is consulted.** The customer data
 is **two tables**, both from the ERP file and both editable by hand:
@@ -108,13 +112,13 @@ export, the on-screen grid and the importers all read **one column definition**
 
 ## Developer run
 ```
-pip install pywin32 openpyxl
+pip install -r requirements.txt
 run_dashboard.bat            # python src\orderflow.py → http://127.0.0.1:8766
 ```
 If the corporate proxy blocks pip, run `set HTTP_PROXY=` and `set HTTPS_PROXY=` in the same console and retry.
 Classic Outlook (LTSC) must be installed and already running.
-PO reading additionally needs the **auth token** for the endpoint — paste it on the
-Settings screen under **PO reading** (or set `$ANTHROPIC_AUTH_TOKEN`). Without one
+PO reading additionally needs a **DeepSeek API key** — paste it on the
+Settings screen under **PO reading** (or set `$DEEPSEEK_API_KEY`). Without one
 every PO comes back with zero codes. Press **Test PO reading** there to confirm the
 address, the token and the model before trusting a real order.
 
@@ -125,14 +129,11 @@ a new window at the old process. If the port is taken by some OTHER program, the
 dashboard moves to the next free port automatically and says which one it picked.
 See `docs\HANDOVER.md` 6.5.
 
-**A scanned PO needs nothing installed.** It used to need a page rasteriser
-(PyMuPDF or `pypdfium2`) *and* an OCR engine (RapidOCR, or Tesseract +
-`pytesseract`), and a scan whose OCR lost the small digits came back with zero
-codes and no error. The PDF now goes to the API as a document, so there is no
-rasteriser, no OCR engine and no `install_ocr.bat` any more.
+**A scanned PO uses PyMuPDF plus DeepSeek Vision.** PyMuPDF rasterises pages to
+JPEG locally; no local OCR engine is installed. DeepSeek reads the page images.
 
 **A DRM-protected PO** (`<##` on disk, read for us by Acrobat or Word) is
-handled the same way: a re-exported plain PDF is sent as a PDF, and a document
+handled the same way: a re-exported plain PDF is rendered to page images, and a document
 that could only be recovered as text is sent as text. One call, one set of
 rules - the "two routes must agree" problem does not exist any more.
 
@@ -180,7 +181,7 @@ src\           dashboard (Python + a single HTML page)
                report.py     the UI: one HTML+CSS+JS string
                selftest.py   regression suites
 CodeExtract\   PO reading
-               claude_engine.py  the extractor: PDF/text -> Claude API -> line items
+               claude_engine.py  the extractor: PDF/text -> DeepSeek API -> line items
                code_rules.py     what a material code IS and how spellings match
                claude_config.json  model, timeouts, size caps
                material_codes_reference.csv  mirror of Master Data > Material Codes

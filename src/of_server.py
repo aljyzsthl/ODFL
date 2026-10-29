@@ -671,7 +671,7 @@ def make_handler(db_path, master, settings):
                     # so the page has ONE source for "is a token stored" - the
                     # flat `claude_key_set` this replaces said the same thing a
                     # second time, which is how the two get to disagree.
-                    data["settings"]["claude"] = \
+                    data["settings"]["deepseek"] = \
                         extractor_bridge.po_reading_state(settings)
                     data["sync_state"] = scheduler.state()
                     data["settings"]["retention"] = settings.get(
@@ -1212,28 +1212,28 @@ def make_handler(db_path, master, settings):
                     if "pdf_delegation" in body:
                         settings["pdf_delegation"] = bool(
                             body["pdf_delegation"])
-                    if "claude_api_key" in body:
+                    if "deepseek_api_key" in body:
                         # The key PO extraction runs on. An EMPTY box means
                         # "leave what is stored alone" - saving the rest of the
                         # form must not wipe it.
-                        want = str(body["claude_api_key"]).strip()
+                        want = str(body["deepseek_api_key"]).strip()
                         if want:
-                            settings.setdefault("claude", {})["api_key"] = want
-                    if "claude_model" in body:
+                            settings.setdefault("deepseek", {})["api_key"] = want
+                    if "deepseek_model" in body:
                         # The model dropdown. Only an ID the endpoint actually
                         # offers is stored; anything else is dropped, because a
                         # wrong ID is a bare HTTP 400 at extraction time.
-                        want = str(body["claude_model"] or "").strip()
+                        want = str(body["deepseek_model"] or "").strip()
                         if want:
-                            settings.setdefault("claude", {})["model"] = want
+                            settings.setdefault("deepseek", {})["model"] = want
                         else:
-                            settings.setdefault("claude", {}).pop("model", None)
-                    if "claude_base_url" in body:
+                            settings.setdefault("deepseek", {}).pop("model", None)
+                    if "deepseek_base_url" in body:
                         # The PO-reading endpoint. Empty means "go back to the
                         # address in claude_config.json", which is why it is
                         # stored as "" rather than deleted-and-then-stale.
-                        settings.setdefault("claude", {})["base_url"] = \
-                            str(body["claude_base_url"] or "").strip()
+                        settings.setdefault("deepseek", {})["base_url"] = \
+                            str(body["deepseek_base_url"] or "").strip()
                     if "po_regex" in body:
                         # The machine-wide PO-number rule. Only a value the
                         # preset list actually offers is accepted, so a typo

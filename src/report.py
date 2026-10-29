@@ -385,7 +385,7 @@ PAGE = """<!DOCTYPE html>
   .meta { color:var(--muted); font-size:12.5px; }
 
   /* ── "API not connected" badge ────────────────────────────────────────────
-     The one failure that looks like a product bug: with no auth token every PO
+     The one failure that looks like a product bug: with no API key every PO
      comes back with ZERO material codes and nothing raises. So it gets a badge
      in the corner of the screens that read POs, and the reason on hover.
      Hover OR keyboard focus opens the note, so it is reachable without a mouse. */
@@ -6000,7 +6000,7 @@ function pickSMode(v){ SET_SMODE = v; render(); }
 
 // Settings is now one card per concern, stacked:
 //
-//   API        endpoint · token · model      (what reads a PO)
+//   DeepSeek API  endpoint · key · model      (what reads a PO)
 //   Email box  mailbox · folder · rules      (what gets collected)
 //
 // They are separate because they fail separately and are looked after by
@@ -6012,7 +6012,7 @@ function renderSettings(){
   // The PO-reading endpoint as the server actually resolved it (settings >
   // environment > claude_config.json). Shown as the box's placeholder so an
   // empty box still tells you where a PO will go.
-  const CL = s.claude || {};
+  const CL = s.deepseek || {};
   return '<div class="setstack">'+ apiSettingsCard(CL) +
     emailSettingsCard(s, o) +
     syncSettingsCard()+ storageCard()+
@@ -6041,7 +6041,7 @@ function apiSettingsCard(CL){
       esc(m.id)+' — '+esc(m.note || '')+'</option>';
   });
   return '<div class="card setcard">'+
-    '<div class="cardhead"><h3>API'+faq('setapi')+'</h3>'+
+    '<div class="cardhead"><h3>'+esc(CL.provider || 'API')+faq('setapi')+'</h3>'+
     '<span class="count">'+(CL.model ? 'reading with '+esc(CL.model) : '')+
     '</span></div>'+
     '<div class="setbody">'+
@@ -6057,12 +6057,12 @@ function apiSettingsCard(CL){
         '<div class="fctl">'+
         '<select id="set-clmodel">'+modelOpts+'</select>'+
         '</div></div>'+
-      '<div class="frow"><label>Auth token</label>'+
+      '<div class="frow"><label>API key</label>'+
         '<div class="fctl">'+
         '<input type="password" id="set-claudekey" autocomplete="off" '+
           'placeholder="'+((CL.key_set) ?
-            'a token is stored — paste a new one to replace it' :
-            'paste the auth token here (required)')+'">'+
+            'a key is stored — paste a new one to replace it' :
+            'paste the DeepSeek API key here (required)')+'">'+
         '</div></div>'+
     '</div>'+
     '<div class="setactions">'+
@@ -6500,14 +6500,14 @@ async function saveSettings(collectNow){
   const ck = el('set-claudekey');
   // Blank = "keep the stored token", so saving the rest of the form never
   // wipes it by accident.
-  if (ck && ck.value) body.claude_api_key = ck.value;
+  if (ck && ck.value) body.deepseek_api_key = ck.value;
   const ep = el('set-poendpoint');
   // Blank here means "use the address in claude_config.json", which is a real
   // choice, so the empty value is sent rather than skipped.
-  if (ep) body.claude_base_url = ep.value;
+  if (ep) body.deepseek_base_url = ep.value;
   const md = el('set-clmodel');
   // Blank means "back to the built-in default", so it is sent as "".
-  if (md) body.claude_model = md.value;
+  if (md) body.deepseek_model = md.value;
   if (val('set-poregex') !== undefined) body.po_regex = val('set-poregex');
   const r = await api('/api/settings', body);
   if (r.error){ alert(r.error); return; }
@@ -6573,12 +6573,12 @@ document.querySelectorAll('.navbtn').forEach(b =>
 // would not be a reset.
 async function resetAllSettings(){
   if (!confirm('Reset all settings to their defaults?\\n\\n'+
-      'CLEARED: API endpoint, auth token, model choice, mailbox / folder, '+
+      'CLEARED: API endpoint, API key, model choice, mailbox / folder, '+
       'lookback, PO-number rule, output format, sync schedule, retention, '+
       'PDF delegation.\\n\\n'+
       'KEPT: Master Data (customers, Ship-To, material codes, product '+
       'mapping), collected emails, attachments and generated files.\\n\\n'+
-      'You will have to paste the auth token again before any PO can be '+
+      'You will have to paste the DeepSeek API key again before any PO can be '+
       'read.')) return;
   toast('Resetting…');
   const r = await api('/api/settings_reset', {});
@@ -6586,12 +6586,12 @@ async function resetAllSettings(){
   await load();
   alert('Settings reset.\\n\\nCleared: '+
     ((r.reset||[]).join(', ') || '(nothing was set)')+
-    '\\n\\nPaste the auth token on Settings > API before reading a PO.');
+    '\\n\\nPaste the DeepSeek API key on Settings > API before reading a PO.');
 }
 
 // ── "PO reading is not connected" ──────────────────────────────────────────
 // Shown in the top corner of the Inbox and of Quick Convert - the two screens
-// that read a PO. The state comes from the SERVER (settings.claude.key_set),
+// that read a PO. The state comes from the SERVER (settings.deepseek.key_set),
 // which resolves the token exactly as the reader does (Settings > environment
 // > .api_key), so the badge cannot disagree with whether a PO would be read.
 //
@@ -6601,14 +6601,14 @@ async function resetAllSettings(){
 function renderApiWarn(){
   const el = document.getElementById('apiwarn');
   if (!el) return;
-  const CL = ((DATA && DATA.settings) || {}).claude || {};
+  const CL = ((DATA && DATA.settings) || {}).deepseek || {};
   if ((TAB !== 'today' && TAB !== 'quick') || CL.key_set){
     el.innerHTML = '';
     return;
   }
   const why = CL.error
     ? CL.error
-    : 'No auth token is stored, so no document can be read.';
+    : 'No DeepSeek API key is stored, so no document can be read.';
   el.innerHTML =
     '<span class="apiwarn" tabindex="0" role="button" '+
       'onclick="openApiSettings()" '+
@@ -6620,8 +6620,8 @@ function renderApiWarn(){
         '<span class="aw-how">A PO would come back with <b>zero material '+
           'codes</b> and no error at all, which looks like a parsing bug '+
           'rather than a setup one.</span>'+
-        '<span class="aw-how" style="margin-top:7px">Paste the assigned '+
-          'token on <b>Settings &rarr; API</b> and press <b>Test PO '+
+        '<span class="aw-how" style="margin-top:7px">Paste the DeepSeek '+
+          'API key on <b>Settings &rarr; API</b> and press <b>Test PO '+
           'reading</b>. The endpoint itself is already configured.</span>'+
         '<span class="aw-link">Open Settings &rarr;</span>'+
       '</span>'+
@@ -6755,21 +6755,21 @@ const FAQ = {
 // The API card quotes the endpoint it resolved, so its text is built at render
 // time rather than written once above.
 function apiFaqText(CL){
-  return 'What reads a PO. Nothing is collected without a token.<br>'+
+  return 'DeepSeek reads each locally rendered PDF page as an image. Nothing '+
+    'is sent without an API key.<br>'+
     '<b>Endpoint</b> - where a PO is sent. Blank uses '+
     (CL.base_url ? '<code>'+esc(CL.base_url)+'</code>' : 'the built-in address')+
     ', and the <code>/v1/messages</code> path is added for you, so the root is '+
-    'enough.<br><b>Model</b> - a stronger model buys speed and recall, not '+
-    'accuracy: every code is confirmed against the Material Code list '+
-    'afterwards. Changing it makes the next read re-extract instead of '+
-    'reusing an older reading.<br><b>Auth token</b> - sent as '+
-    '<code>Authorization: Bearer ...</code>, stored in '+
+    'enough.<br><b>Model</b> - <code>deepseek-flash</code> is required for '+
+    'PDF page images. Every code is still confirmed against the Material '+
+    'Code list afterwards.<br><b>API key</b> - sent as '+
+    '<code>x-api-key</code>, stored in '+
     '<code>config/settings.json</code> and never shown again; leave blank to '+
     'keep the stored one. The <b>Material Code list still decides</b> which '+
     'codes are published - a code it does not carry is set aside for you, '+
     'never guessed.'+
     (CL.key_set ? '' :
-      ' <b>No token is stored yet, so no PO can be read.</b>');
+      ' <b>No DeepSeek API key is stored yet, so no PO can be read.</b>');
 }
 
 function faq(key, label){

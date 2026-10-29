@@ -75,7 +75,7 @@ echo.
 
 echo Verifying...
 rem [1] The packages OrderFlow cannot start without.
-%PYEXE% -c "import sys, win32com.client, openpyxl; print('  [OK] core packages load')"
+%PYEXE% -c "import sys, win32com.client, openpyxl, pymupdf; print('  [OK] core packages load')"
 if errorlevel 1 goto :verifyfail
 
 rem [2] The EXTRACTOR is asked, not a hand-written import list: it reports
@@ -83,7 +83,7 @@ rem the model it will use and whether a key is stored. Without a key every PO
 rem comes back with zero codes and nothing explains why - the file just looks
 rem empty, which is exactly the failure this step is here to prevent.
 pushd CodeExtract
-%PYEXE% -c "import sys; sys.path.insert(0, '.'); import claude_engine as c; s = c.status_summary(); print('  [OK] PO endpoint:', s['endpoint']); print('  [OK] extraction model:', s['model']); print('  [OK] material codes on file:', s['reference_codes']); print('  [WARN] NO AUTH TOKEN - no PO can be read until one is pasted on the Settings screen (PO reading)') if not s['api_key_set'] else None"
+%PYEXE% -c "import sys; sys.path.insert(0, '.'); import claude_engine as c; s = c.status_summary(); print('  [OK] PO endpoint:', s['endpoint']); print('  [OK] extraction model:', s['model']); print('  [OK] material codes on file:', s['reference_codes']); print('  [WARN] NO DEEPSEEK API KEY - no PO can be read until one is pasted on the Settings screen (PO reading)') if not s['api_key_set'] else None"
 set VERC=%errorlevel%
 popd
 if not "%VERC%"=="0" goto :verifyfail
@@ -95,7 +95,8 @@ echo ============================================
 echo  Next steps:
 echo   1. Request "NASCA Decrypt with Python" via IT4U for THIS PC
 echo      (needed to read DRM-protected PO attachments).
-echo   2. Run run_dashboard.bat to start OrderFlow.
+echo   2. Set DEEPSEEK_API_KEY or paste the key in Settings - API.
+echo   3. Run run_dashboard.bat to start OrderFlow.
 echo ============================================
 pause
 exit /b 0
@@ -106,11 +107,10 @@ echo [WARN] Verification failed - read the message above.
 echo.
 echo   "No module named ..."      that package did not install. Run this
 echo                              file again and read the output to the end.
-echo   "NO AUTH TOKEN"             no auth token is stored, so no PO can be
-echo                              read. Paste the assigned token on the
-echo                              Settings screen (PO reading box), or set
-echo                              $ANTHROPIC_AUTH_TOKEN. It is sent as
-echo                              "Authorization: Bearer <token>".
+echo   "NO AUTH TOKEN"             no DeepSeek API key is stored, so no PO can
+echo                              be read. Paste the key on the Settings
+echo                              screen (PO reading box), or set
+echo                              DEEPSEEK_API_KEY.
 echo.
 echo   If the interpreter path printed above is not the Python you
 echo   installed, "py" and "pip" are using different interpreters - report

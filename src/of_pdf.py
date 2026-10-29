@@ -1497,8 +1497,8 @@ Imports CodeExtract/claude_engine.py (formerly CodeExtract/engine.py) and, on
 Confirm, builds document -> (code, qty, unit price) records -> Order Upload
 Excel (the ERP EXCEL section of of_erp.py).
 
-The engine sends the document to the Claude API and gets the ordered line
-items back as JSON. It still keeps its own paths (claude_config.json,
+The DeepSeek test engine renders PDF pages to images, sends them to DeepSeek
+and gets the ordered line items back as JSON. It still keeps its own paths (claude_config.json,
 data_cache) relative to CodeExtract/, and its code list is a mirror of Master
 Data > Material Codes, rebuilt by material_master.sync_to_engine().
 
@@ -1536,7 +1536,7 @@ def _import_engine(settings):
 def _load_module(settings):
     """The PO extraction engine - `CodeExtract/claude_engine.py`.
 
-    PDF extraction is done by the Claude API: the document is sent as-is and
+    PDF extraction is done by DeepSeek Vision: pages are rendered locally and
     the ordered line items come back as JSON. The local engine that used to do
     this (OCR, table geometry, four fallback paths) is retired in
     `CodeExtract/_legacy/`.
@@ -1546,7 +1546,7 @@ def _load_module(settings):
         raise RuntimeError(
             "no API key stored. Paste one on the Settings screen under "
             '"PO reading", or set the environment variable '
-            "ANTHROPIC_AUTH_TOKEN.")
+            "DEEPSEEK_API_KEY.")
     return mod
 
 
@@ -1563,18 +1563,19 @@ def po_reading_state(settings):
                 "key_set": False, "models": [], "error": str(e)}
     cfg = mod.load_config()
     return {
+        "provider": "DeepSeek",
         # `base_url` is the address a PO will actually go to; the Settings box
         # shows `stored_base_url` as its value, so an empty box still reads as
         # "use the default" rather than looking like the default was typed in.
         "base_url": mod.base_url(),
         "stored_base_url": str(
-            ((settings.get("claude") or {}).get("base_url")) or ""),
+            ((settings.get("deepseek") or {}).get("base_url")) or ""),
         "model": cfg.get("model", ""),
         # The dropdown shows `stored_model` as its selection and offers
         # `models`; `model` is the one a PO would actually be read with
         # (settings > claude_config.json > default).
         "stored_model": str(
-            ((settings.get("claude") or {}).get("model")) or ""),
+            ((settings.get("deepseek") or {}).get("model")) or ""),
         "default_model": mod.DEFAULTS.get("model", ""),
         "key_set": bool(mod.api_key()),
         "models": [{"id": k, "note": v} for k, v in mod.KNOWN_MODELS.items()],

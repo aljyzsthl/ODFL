@@ -107,6 +107,7 @@ powershell -NoProfile -Command ^
   "$j.outlook.mailbox_name = '';" ^
   "$j.quick_folder = '';" ^
   "if ($j.PSObject.Properties.Name -contains 'claude') { $j.claude.api_key = ''; $j.claude.base_url = '' };" ^
+  "if ($j.PSObject.Properties.Name -contains 'deepseek') { $j.deepseek.api_key = ''; $j.deepseek.base_url = '' };" ^
   "[IO.File]::WriteAllText($p, ($j | ConvertTo-Json -Depth 6), (New-Object Text.UTF8Encoding $false))"
 rem The auth token is a CREDENTIAL, so it never travels with a handover copy -
 rem the recipient puts their own in on the Settings screen (PO reading). The

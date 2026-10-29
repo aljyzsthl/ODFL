@@ -34,10 +34,9 @@ py -m pip install -r requirements.txt
 ```
 
 The first two lines clear the corporate proxy, which otherwise blocks the
-download. This installs **two** packages — `pywin32` (Outlook and Excel) and
-`openpyxl` (spreadsheets) — and takes under a minute. PO reading is done by
-the Claude API over HTTPS with the standard library, so there is no PDF or OCR
-package to install any more.
+download. This installs `pywin32` (Outlook and Excel), `openpyxl`
+(spreadsheets), and `PyMuPDF` (rendering PDF pages for DeepSeek Vision). No
+local OCR package is required.
 
 **Then confirm it worked — do not skip this.** The check below prints the
 address a PO will be sent to, the model, the number of material codes on file
@@ -45,17 +44,17 @@ and whether a token is stored, because a missing token otherwise fails
 silently: the PO simply comes back with zero codes and nothing says why.
 
 ```
-py -c "import sys, win32com.client, openpyxl; print('ALL OK -', sys.executable)"
+py -c "import sys, win32com.client, openpyxl, pymupdf; print('ALL OK -', sys.executable)"
 cd CodeExtract && py -c "import claude_engine as c; s = c.status_summary(); print(s)" && cd ..
 ```
 
-You should see `ALL OK` followed by a path, then `endpoint` (the SEA address
+You should see `ALL OK` followed by a path, then `endpoint` (the DeepSeek address
 ending in `/v1/messages`), `model`, `reference_codes`, and `api_key_set: True`.
 Anything else — especially `ModuleNotFoundError` — means a package did not
 install; run step 3 again and read the output to the end.
 
-**Then paste the token.** Start the app, go to Settings, find **PO reading**,
-paste the auth token you were assigned and press **Save**, then press
+**Then paste the API key.** Start the app, go to Settings, find **PO reading**,
+paste the DeepSeek API key and press **Save**, then press
 **Test PO reading**. You want a green *"The endpoint answered"* with a round
 trip in milliseconds. A red result names the fix — a rejected key says so, an
 unreachable address says so. Nothing else proves the setup works.
@@ -96,9 +95,9 @@ DRM-protected.
 | What you see | What it means |
 |---|---|
 | `No module named 'win32com'` or `'pythoncom'` | Step 3 has not completed. Run it again. |
-| **Every PO extracts 0 codes** | No token is stored. Paste it on the Settings screen (PO reading) or set `$ANTHROPIC_AUTH_TOKEN`, then press **Save** and **Test PO reading**. Without one no document can be read, and no error names the cause. |
-| **Test PO reading says the endpoint rejected the key** | The token is wrong or expired. It is sent as `Authorization: Bearer …` — a public Anthropic `sk-ant-…` key will not work here, because this is the SEA endpoint. Ask for a new one. |
-| **Test PO reading says the address did not answer** | This PC cannot reach `seadev-claude.sec.samsung.net:8081`. Check VPN / internal network. The token is fine. |
+| **Every PO extracts 0 codes** | No key is stored. Paste it on the Settings screen (PO reading) or set `$DEEPSEEK_API_KEY`, then press **Save** and **Test PO reading**. |
+| **Test PO reading says the endpoint rejected the key** | The DeepSeek key is wrong or expired. Obtain a valid key from the DeepSeek platform. |
+| **Test PO reading says the address did not answer** | This PC cannot reach `api.deepseek.com`. Check its Internet/proxy access. |
 | **Every PO says "HTTP 404"** | The endpoint box holds the wrong address, e.g. the full `/v1/messages` URL of a different service. Leave it **blank** to use the shipped default. |
 | A PO extracts 0 codes and it is **not** a scan | Check `Master Data > Material Codes` is populated — the console prints `[codes] engine code list rebuilt from the master: N codes` at startup. If N is 0, the code list is empty and nothing can match. |
 | `Python was not found…` | See the note in step 1. |
