@@ -15,6 +15,9 @@ Official references:
 3. The existing forced tool call returns the same `orders` JSON schema.
 4. The existing Material Code gate still decides which lines can reach ERP.
 
+The extraction request explicitly disables DeepSeek Thinking mode because the
+API does not allow a forced named `tool_choice` while Thinking is enabled.
+
 DeepSeek does not accept PDF `document` blocks. DRM documents that can only be
 recovered as text continue through the existing text route.
 

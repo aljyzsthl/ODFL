@@ -641,6 +641,10 @@ def _call(content_blocks: list, cfg: dict) -> dict:
     payload = {
         "model": cfg.get("model", DEFAULTS["model"]),
         "max_tokens": int(cfg.get("max_tokens", DEFAULTS["max_tokens"])),
+        # DeepSeek defaults to thinking mode, but its API rejects a forced
+        # named tool_choice while thinking is enabled. Extraction must force
+        # this schema-producing tool, so disable thinking for this call.
+        "thinking": {"type": "disabled"},
         "system": _SYSTEM,
         "tools": [_TOOL],
         # Forced: the answer must be the structured line items, not prose

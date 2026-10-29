@@ -3971,6 +3971,24 @@ def run_extract():
           claude_engine.DEFAULTS["model"] in claude_engine.KNOWN_MODELS,
           claude_engine.DEFAULTS["model"])
 
+    # DeepSeek rejects a forced named tool_choice while thinking is enabled.
+    # Capture the outgoing extraction payload without making a network call.
+    sent = {}
+    old_post = claude_engine._post
+    try:
+        def _capture_post(payload, cfg, **_kwargs):
+            sent.update(payload)
+            return {"content": [{"type": "tool_use", "input": {"orders": []}}]}
+        claude_engine._post = _capture_post
+        claude_engine._call([{"type": "text", "text": "probe"}],
+                            claude_engine.load_config())
+    finally:
+        claude_engine._post = old_post
+    check("DeepSeek extraction disables thinking for forced tool_choice",
+          sent.get("thinking") == {"type": "disabled"}, str(sent.get("thinking")))
+    check("the extraction tool remains explicitly forced",
+          sent.get("tool_choice", {}).get("type") == "tool")
+
     # A rejected key must say x-api-key, because that is the wire format.
     msg = claude_engine._plain_error(401, "invalid token", "https://h/v1/messages")
     check("a 401 tells you the token is the problem", "rejected the key" in msg, msg)
