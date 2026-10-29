@@ -120,6 +120,15 @@ DEFAULTS = {
     "prompt_version": 1,
 }
 
+# Structured extraction is verbose: every PO line carries nine fields.  A
+# fixed 8K output cap is enough for one or two ordinary pages, but a bundle of
+# four full-page POs can need well over that and DeepSeek may then return an
+# empty `orders` array rather than a visibly truncated tool call.  Keep the
+# small-document default, and grow the allowance only when page images are
+# actually present.  DeepSeek currently accepts up to 384K output tokens.
+PDF_OUTPUT_TOKENS_PER_PAGE = 5_000
+DEEPSEEK_MAX_OUTPUT_TOKENS = 393_216
+
 
 # ──────────────────────────────────────────────
 # Config and credentials
@@ -169,6 +178,7 @@ def config_signature() -> str:
     # _SYSTEM and _TOOL are defined further down the file; look them up at call
     # time so this stays correct wherever it sits.
     for part in (globals().get("_SYSTEM", ""),
+                 globals().get("_USER_PDF", ""),
                  json.dumps(globals().get("_TOOL", {}), sort_keys=True)):
         h.update(str(part).encode("utf-8"))
     h.update(str(DEFAULTS["prompt_version"]).encode())
@@ -390,7 +400,13 @@ _ORDER_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "material_code": {"type": "string"},
+                    "material_code": {
+                        "type": "string",
+                        "description": "The product model / SKU only. If an "
+                                       "ITEM ID prefixes the model with store "
+                                       "segments, omit those segments: printed "
+                                       "51E-863-RT16A6195SR means "
+                                       "RT16A6195SR."},
                     "description": {"type": "string"},
                     "quantity": {"type": "string"},
                     "unit": {"type": "string"},
@@ -437,11 +453,11 @@ _SYSTEM = """You read purchase orders (POs) for Samsung home appliances and retu
 
 Follow these rules exactly.
 
-1. Return one entry in `orders` per DISTINCT PURCHASE ORDER in the document. Most documents are ONE order and then `orders` holds exactly one entry - that is the normal case, not an error. A document may also hold several POs glued together: four pages, each with its own "P/O #" header and its own table, are FOUR orders. Never merge two different order numbers into one entry, and never split one order number across two entries.
+1. FIRST PASS - before extracting any line item, silently inspect EVERY PAGE in sequence and inventory the explicit purchase-order number printed on each page. Then return one entry in `orders` per DISTINCT PURCHASE ORDER in that inventory. A document may hold several POs glued together: four pages, each with its own "P/O #" header and its own table, are FOUR orders. At the end, verify that `orders` contains exactly one entry for every distinct explicit order number you found. Never merge two different order numbers into one entry, and never split one order number across two entries.
 
-2. A line item belongs to the order whose header (the P/O number block) is the nearest one ABOVE it. When a page continues the previous page's table and prints no new order number, its lines belong to the order above it - usually the one on the previous page. When a page prints a NEW order number, every line below that header belongs to the new order.
+2. A line item belongs to the order whose header (the P/O number block) is the nearest one ABOVE it. A page with a different explicit P/O number ALWAYS starts a new order, even when its buyer, ship-to address, products, layout, prices or dates look almost identical to another page. When a page continues the previous page's table and prints no new order number, its lines belong to the order above it - usually the one on the previous page. When a page prints a NEW order number, every line below that header belongs to the new order.
 
-3. Inside each order, return one object per ORDERED LINE ITEM - one row of that order's items table that names a product ordered and carries its own quantity.
+3. Inside each order, return one object per ORDERED LINE ITEM - one row of that order's items table that names a product ordered and carries its own quantity. Do not deduplicate across orders: if two different PO numbers order the same product with the same quantity and price, that line must appear once in EACH order.
 
 4. Copy every value EXACTLY AS PRINTED. Never recalculate, round, convert, reformat or "fix" a number. Write digits with the decimal point as printed and no currency symbol and no thousands separator: printed "1,234.50" is returned as "1234.50" (removing the $ and the comma is not a change of value; changing the digits is).
 
@@ -451,7 +467,7 @@ Follow these rules exactly.
 
 7. SKIP a model number that appears only inside ANOTHER item's description or notes ("...includes RF28R7201SR..."). A model named in prose is not an order line.
 
-8. material_code: the product / model / SKU code as printed - the identifier alone, with no description words and no leading category number.
+8. material_code: the product model / SKU identifier, with no description words and no store/category/vendor prefix. Some ITEM ID values join a store prefix to the actual Samsung model. For example, printed ITEM ID "51E-863-RT16A6195SR" means material_code "RT16A6195SR"; "51H-863-RS27T5200SG" means "RS27T5200SG". Keep the complete printed row in source_line, but do not put the "51E-863-" or "51H-863-" prefix in material_code.
 
 9. quantity: the number of units ordered. unit_price: the price of ONE unit. amount: the line's extended total. If the document prints only ONE money figure for a line, put it in unit_price and leave amount empty - do not multiply it yourself.
 
@@ -465,8 +481,11 @@ Follow these rules exactly.
 
 14. When several orders share one buyer block, that block is NOT an order - it is the document's letterhead. The number of entries in `orders` is decided by the number of distinct order numbers, not by the number of addresses or the number of pages."""
 
-_USER_PDF = ("Read this purchase order document and return every order in it "
-             "with its ordered line items. Most documents hold one order.")
+_USER_PDF = ("Read every labelled PDF page before extracting. First inventory "
+             "the explicit P/O number on each page, then return every distinct "
+             "order with only that order's line items. Finally verify that the "
+             "number of returned orders equals the number of distinct explicit "
+             "P/O numbers in the page inventory.")
 _USER_TEXT = ("Below is the text of a purchase order document recovered from a "
               "protected file, so there are no page coordinates and the "
               "columns may have run together. It may hold more than one "
@@ -638,9 +657,16 @@ def test_connection(cfg: dict = None, base_url_override: str = "",
 
 def _call(content_blocks: list, cfg: dict) -> dict:
     """One extraction call. Returns the tool input (the line items)."""
+    configured_tokens = int(cfg.get("max_tokens", DEFAULTS["max_tokens"]))
+    page_count = sum(1 for block in content_blocks
+                     if block.get("type") == "image")
+    max_tokens = min(
+        DEEPSEEK_MAX_OUTPUT_TOKENS,
+        max(configured_tokens, page_count * PDF_OUTPUT_TOKENS_PER_PAGE),
+    )
     payload = {
         "model": cfg.get("model", DEFAULTS["model"]),
-        "max_tokens": int(cfg.get("max_tokens", DEFAULTS["max_tokens"])),
+        "max_tokens": max_tokens,
         # DeepSeek defaults to thinking mode, but its API rejects a forced
         # named tool_choice while thinking is enabled. Extraction must force
         # this schema-producing tool, so disable thinking for this call.
@@ -695,7 +721,16 @@ def _pdf_blocks(path: str, cfg: dict) -> list:
     blocks = [{"type": "text", "text": _USER_PDF}]
     encoded_bytes = 0
     try:
-        for page in doc:
+        for page_number, page in enumerate(doc, 1):
+            # Images have no intrinsic filename or page number in an
+            # Anthropic content array.  An explicit marker makes the boundary
+            # visible to the model and lets the prompt's nearest-header rule
+            # refer to an unambiguous page.
+            blocks.append({
+                "type": "text",
+                "text": (f"--- BEGIN PDF PAGE {page_number} OF "
+                         f"{doc.page_count} ---"),
+            })
             pix = page.get_pixmap(matrix=matrix, alpha=False,
                                   colorspace=fitz.csRGB)
             jpg = pix.tobytes("jpeg", jpg_quality=quality)
@@ -801,6 +836,24 @@ def apply_gate(records: list, backbone: BackboneIndex,
             kept.append(r)
             continue
         code, kind = backbone.lookup(raw)
+        matched_input = raw
+        if not code and "-" in raw:
+            # Some retailers print an ITEM ID such as
+            # `51E-863-RT16A6195SR`: the final segment is the Samsung model,
+            # while the leading groups are the retailer/category/supplier
+            # key.  This is not a heuristic rewrite: accept a shorter suffix
+            # only when that exact suffix is independently present in the
+            # Material Code master.  Preserve the complete printed ID for
+            # review/audit.
+            parts = raw.split("-")
+            for start in range(1, len(parts)):
+                candidate = "-".join(parts[start:]).strip()
+                suffix_code, suffix_kind = backbone.lookup(candidate)
+                if suffix_code:
+                    code, kind = suffix_code, "prefixed_" + suffix_kind
+                    matched_input = candidate
+                    r["raw_material_code"] = raw
+                    break
         if not code:
             r["needs_review"] = True
             r["match_type"] = "unconfirmed"
@@ -814,7 +867,7 @@ def apply_gate(records: list, backbone: BackboneIndex,
             continue
         r["backbone_code"] = code
         r["match_type"] = kind
-        r["material_code"] = backbone.printed_form(code, raw)
+        r["material_code"] = backbone.printed_form(code, matched_input)
         kept.append(r)
     return kept, review
 

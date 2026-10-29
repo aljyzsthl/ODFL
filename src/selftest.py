@@ -3672,6 +3672,16 @@ def run_extract():
           [r["material_code"] for r in kept
            if not r.get("needs_review")] == ["RF22A4111SR"],
           f"{[(r['material_code'], r.get('needs_review')) for r in kept]}")
+
+    prefixed, prefixed_review = claude_engine.apply_gate(
+        [rec("51E-863-RT16A6195SR")], bb, "curacao.pdf", "ALRRY-A")
+    check("a retailer ITEM ID publishes its master-confirmed SKU suffix",
+          prefixed[0]["material_code"] == "RT16A6195SR"
+          and prefixed[0]["backbone_code"] == "RT16A6195SR"
+          and not prefixed[0].get("needs_review"), str(prefixed[0]))
+    check("...and preserves the complete printed ITEM ID for audit",
+          prefixed[0].get("raw_material_code") == "51E-863-RT16A6195SR"
+          and not prefixed_review, str(prefixed_review))
     check("a code the list does not carry is still SHOWN",
           any(r["material_code"] == "NOT-A-REAL-MODEL" for r in kept),
           f"{[r['material_code'] for r in kept]}")
@@ -3980,14 +3990,18 @@ def run_extract():
             sent.update(payload)
             return {"content": [{"type": "tool_use", "input": {"orders": []}}]}
         claude_engine._post = _capture_post
-        claude_engine._call([{"type": "text", "text": "probe"}],
-                            claude_engine.load_config())
+        claude_engine._call(
+            [{"type": "text", "text": "probe"}]
+            + [{"type": "image"} for _ in range(4)],
+            claude_engine.load_config())
     finally:
         claude_engine._post = old_post
     check("DeepSeek extraction disables thinking for forced tool_choice",
           sent.get("thinking") == {"type": "disabled"}, str(sent.get("thinking")))
     check("the extraction tool remains explicitly forced",
           sent.get("tool_choice", {}).get("type") == "tool")
+    check("multi-page PDFs get enough room for their structured line items",
+          sent.get("max_tokens") >= 20_000, str(sent.get("max_tokens")))
 
     # A rejected key must say x-api-key, because that is the wire format.
     msg = claude_engine._plain_error(401, "invalid token", "https://h/v1/messages")
@@ -4037,6 +4051,12 @@ def run_extract():
                   and i.get("source", {}).get("data") for i in images))
         check("the PDF document block is gone",
               not any(b.get("type") == "document" for b in blocks))
+        markers = [b.get("text") for b in blocks
+                   if b.get("type") == "text"
+                   and "BEGIN PDF PAGE" in b.get("text", "")]
+        check("every rendered image has an explicit page-boundary marker",
+              markers == ["--- BEGIN PDF PAGE 1 OF 2 ---",
+                          "--- BEGIN PDF PAGE 2 OF 2 ---"], str(markers))
     finally:
         shutil.rmtree(rendered, ignore_errors=True)
 
@@ -4452,6 +4472,14 @@ def run_multipo():
           "DISTINCT PURCHASE ORDER" in claude_engine._SYSTEM)
     check("...and which order a line belongs to (the nearest header above)",
           "nearest one ABOVE" in claude_engine._SYSTEM)
+    check("...first inventories every page before extracting lines",
+          "FIRST PASS" in claude_engine._SYSTEM
+          and "inspect EVERY PAGE" in claude_engine._SYSTEM)
+    check("...verifies the returned order count against explicit PO numbers",
+          "exactly one entry for every distinct explicit order number"
+          in claude_engine._SYSTEM)
+    check("...does not deduplicate repeated products across different POs",
+          "Do not deduplicate across orders" in claude_engine._SYSTEM)
     item = props["orders"]["items"]["properties"]
     check("each order carries its own number, total, dates and address",
           all(k in item for k in ("po_number", "document_total", "po_date",
