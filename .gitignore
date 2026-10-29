@@ -1,0 +1,60 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Local credentials and machine-specific settings
+.env
+.env.*
+config/settings.json
+*.pem
+*.key
+
+# Customer and corporate master data (the remote repository is public)
+config/domain_master.json
+config/ship_to_master.json
+config/material_master.json
+config/unknown_dismissed.json
+config/erp_template.XLSX
+config/erp_template.xlsx
+CodeExtract/material_codes_reference.csv
+CodeExtract/_legacy/customer_templates.json
+CodeExtract/_legacy/engine_baseline.json
+
+# Runtime mail, attachments, generated ERP files, and logs
+data/
+logs/
+*.log
+*.db
+*.db-wal
+*.db-shm
+
+# Real/reference purchase orders and extraction results
+CodeExtract/data_upload/
+CodeExtract/data_cache/
+CodeExtract/data_output/
+
+# Local development scratch state; keep the reusable port probe
+.workbuddy/*
+!.workbuddy/port_probe.py
+
+# Test mail may contain real messages
+tests/test_mails/*
+!tests/test_mails/README.txt
+
+# Build/release output
+build/
+dist/
+pydeps/
+OrderFlow_src_*/
+OrderFlow_src_*.zip
+
+# Office temporary files and OS metadata
+~$*
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini

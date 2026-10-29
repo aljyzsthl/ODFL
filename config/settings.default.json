@@ -1,0 +1,51 @@
+{
+  "db_path": "data/po_mail.db",
+  "attachments_dir": "data/attachments",
+  "source": "outlook",
+  "outlook": {
+    "mailbox_name": "",
+    "folder_path": "",
+    "lookback_days": 1,
+    "max_items": 500,
+    "attachments_only": true
+  },
+  "extractor": {
+    "enabled": true
+  },
+  "pdf_delegation": false,
+  "quick_folder": "",
+  "erp_format": ["full"],
+  "today_window_days": 1,
+  "retention": {
+    "attachments_days": 180
+  },
+  "sync": {
+    "mode": "interval",
+    "interval_min": 60,
+    "times": [
+      "09:00",
+      "14:00"
+    ]
+  },
+  "server": {
+    "port": 8000,
+    "open_browser": true
+  },
+  "po_regex_default": "(?:P\\.?O\\.?|PURCHASE\\s*ORDER)(?:\\s*(?:NUMBER|NO|NUM))?[\\s#:.\\-]*([A-Z]{0,4}[0-9][A-Z0-9\\-]{3,19})",
+  "po_attachment_regex": "(\\d{7,12})",
+  "revision_keywords": [
+    "REVISED",
+    "REVISION",
+    "REV",
+    "AMEND",
+    "CHANGE",
+    "UPDATE",
+    "수정"
+  ],
+  "cancel_keywords": [
+    "CANCEL",
+    "CANCELLATION",
+    "VOID",
+    "취소"
+  ]
+}

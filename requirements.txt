@@ -1,0 +1,24 @@
+# OrderFlow - Python packages
+#
+# Install with:
+#     py -m pip install -r requirements.txt
+#
+# pywin32 provides both win32com and pythoncom, which OrderFlow uses to
+# drive Outlook (reading mail) and Excel (reading DRM-protected files).
+# Missing it is what produces "No module named 'win32com'".
+
+pywin32                  # Outlook + Excel COM automation
+openpyxl                 # read/write .xlsx (ERP template, price sheets)
+
+# Nothing else is needed.
+#
+# PO reading is done by the Claude API (CodeExtract/claude_engine.py), which
+# calls it over HTTPS with the standard library - so the five packages that
+# used to be listed here are gone:
+#
+#   pdfplumber / pymupdf / pypdfium2 / pypdf   PDF text and coordinates
+#   rapidocr-onnxruntime / opencv-python-headless   OCR for scanned POs
+#
+# A scanned PO needs no OCR engine any more: the document is sent as a PDF and
+# read as a document. config\settings.json (or $ANTHROPIC_API_KEY) holds the
+# key; see docs\HANDOVER.md chapter 4.
