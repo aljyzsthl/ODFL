@@ -139,6 +139,38 @@ def _master_values(mail, master):
     return out
 
 
+def _reclassify_stored_mails(conn, master):
+    """Apply the current domain identity table to every stored mail.
+
+    Domain edits used to update only the master files. Existing mail kept its
+    old/blank `customer` until somebody separately clicked Apply master, so a
+    newly added line did not really appear in Inbox. This is deliberately a
+    full reconciliation: deleting a domain also clears a now-stale customer
+    instead of preserving an identity the master no longer owns.
+
+    Returns (changed rows, currently matched rows).
+    """
+    changed = matched = 0
+    for row in conn.execute(
+            "SELECT id, sender, sender_domain, customer, retail_builder "
+            "FROM mails"):
+        entry = classifier.match_customer(
+            row["sender"], row["sender_domain"], master)
+        customer = (entry or {}).get("customer", "")
+        role = (entry or {}).get("role", "")
+        if customer:
+            matched += 1
+        if ((row["customer"] or "") == customer
+                and (row["retail_builder"] or "") == role):
+            continue
+        conn.execute(
+            "UPDATE mails SET customer=?, retail_builder=? WHERE id=?",
+            (customer, role, row["id"]))
+        changed += 1
+    conn.commit()
+    return changed, matched
+
+
 def _typed_party(body):
     """The Sold-To / Ship-To the row is SHOWING, taken from the request.
 
@@ -1085,6 +1117,10 @@ def make_handler(db_path, master, settings):
                         with open(tmp, "wb") as f:
                             f.write(raw)
                         r = ship_master.dm_upload(settings, tmp, fname)
+                        changed, matched = _reclassify_stored_mails(
+                            conn, _master())
+                        r["reclassified"] = changed
+                        r["matched_mails"] = matched
                         r["ok"] = True
                         self._json(r)
                     except Exception as e:
@@ -1109,12 +1145,21 @@ def make_handler(db_path, master, settings):
                     except ValueError as e:
                         self._json({"error": str(e)}, 400)
                         return
-                    self._json({"ok": True, "index": at})
+                    changed, matched = _reclassify_stored_mails(
+                        conn, _master())
+                    self._json({"ok": True, "index": at,
+                                "reclassified": changed,
+                                "matched_mails": matched})
 
                 elif self.path == "/api/domain_row_del":
                     ok = ship_master.dm_delete_row(settings, body.get("index"))
-                    self._json({"ok": ok} if ok else
-                               {"error": "row not found"}, 404)
+                    if not ok:
+                        self._json({"error": "row not found"}, 404)
+                        return
+                    changed, matched = _reclassify_stored_mails(
+                        conn, _master())
+                    self._json({"ok": True, "reclassified": changed,
+                                "matched_mails": matched})
 
                 elif self.path == "/api/domain_row_set":
                     ok = ship_master.dm_set_cell(
@@ -1123,14 +1168,21 @@ def make_handler(db_path, master, settings):
                     if not ok:
                         self._json({"error": "row or field not found"}, 404)
                         return
-                    self._json({"ok": True})
+                    changed, matched = _reclassify_stored_mails(
+                        conn, _master())
+                    self._json({"ok": True, "reclassified": changed,
+                                "matched_mails": matched})
 
                 elif self.path == "/api/domain_row_clear":
                     # Empty the domain table ONLY. The pair table is untouched -
                     # "Clear all" is per table, because a click that wiped both
                     # would lose the customer data in one go.
-                    self._json({"ok": True,
-                                "removed": ship_master.dm_clear(settings)})
+                    removed = ship_master.dm_clear(settings)
+                    changed, matched = _reclassify_stored_mails(
+                        conn, _master())
+                    self._json({"ok": True, "removed": removed,
+                                "reclassified": changed,
+                                "matched_mails": matched})
 
                 elif self.path == "/api/party_options":
                     # Sold-To / Ship-To codes a DOMAIN owns. The domain is the
@@ -1578,21 +1630,12 @@ def make_handler(db_path, master, settings):
                     # Re-match every stored mail against the Ship-To master.
                     # Only the customer (the domain) is written back - the
                     # Sold-To / Ship-To pair stays whatever was picked on the row.
-                    n = 0
-                    for r in conn.execute(
-                            "SELECT id, sender, sender_domain FROM mails"):
-                        entry = classifier.match_customer(
-                            r["sender"], r["sender_domain"], _master())
-                        if not entry:
-                            continue
-                        conn.execute(
-                            "UPDATE mails SET customer=?, retail_builder=? "
-                            "WHERE id=?",
-                            (entry["customer"], entry.get("role", ""), r["id"]))
-                        n += 1
-                    conn.commit()
+                    changed, matched = _reclassify_stored_mails(
+                        conn, _master())
                     self._json({"ok": True,
-                                "message": f"Ship-To master applied to {n} POs."})
+                                "message": ("Ship-To master applied: "
+                                            f"{matched} PO(s) matched, "
+                                            f"{changed} row(s) changed.")})
 
                 elif self.path == "/api/refetch_att":
                     # Re-open mails whose attachments were not saved in Outlook and

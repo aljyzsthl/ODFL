@@ -927,13 +927,13 @@ PAGE = """<!DOCTYPE html>
      { overflow:hidden }` clips anything positioned within it, and the Inbox
      table scrolls horizontally inside `.cardbody` on a narrow window.
 
-     `absolute`, not `fixed` (2026-10-28): both anchor to a rect taken once,
-     and the popup is closed on any scroll either way, so the behaviour is the
-     same - but a `fixed` layer created after the first paint did not survive
-     into a headless capture, and an absolutely positioned one is part of the
-     document layer. The coordinates below add the scroll offsets for the same
-     reason. One element serves every picker: only one can be open at a time. */
-  #pcmenu { position:absolute; z-index:400; max-height:252px; overflow-y:auto;
+     It is fixed to the VIEWPORT, because the table has its own horizontal
+     scroller. Page coordinates made some Ship-To menus land outside the
+     visible card after a Sold-To selection on a scrolled table. Any scroll
+     closes it, so it never has to follow the cell. One element serves every
+     picker: only one can be open at a time. */
+  #pcmenu { position:fixed; z-index:4000; max-height:252px; overflow-y:auto;
+    max-width:calc(100vw - 12px);
     padding:4px; background:var(--card); border:1px solid var(--border);
     border-radius:9px; box-shadow:0 12px 30px rgba(15,23,42,.17),
       0 2px 6px rgba(15,23,42,.07); }
@@ -1779,28 +1779,43 @@ let PARTYQ = {};     // domain -> true while its request is in flight
 function forgetParty(){
   PARTY = {};
   PARTYQ = {};
-  refreshMasterList();
+  // Several cells can be pasted/tabbed through while the first refresh is in
+  // flight. Mark every edit: refreshMasterList() will make another pass when
+  // that happens instead of letting the first, intermediate response win.
+  MASTER_DIRTY = true;
+  return refreshMasterList();
 }
 
 // The customer data on its own: 4 keys, a few KB, vs ~140 KB for the whole
 // dashboard. Called from forgetParty(), i.e. after every master edit.
 let MASTERQ = null;
+let MASTER_DIRTY = false;
 function refreshMasterList(){
-  if (MASTERQ || !DATA) return MASTERQ;
-  const before = JSON.stringify(DATA.master || []);
-  MASTERQ = api('/api/master_list').then(r => {
-    MASTERQ = null;
-    if (!r || r.error) return;
-    if (r.master) DATA.master = r.master;
-    if (r.erp) DATA.erp = r.erp;
-    if (r.domain_status) DATA.domain_status = r.domain_status;
-    if (r.ship_conflicts) DATA.ship_conflicts = r.ship_conflicts;
-    // A tab switch while this was in flight drew the OLD list. Redraw the
-    // Inbox when the answer actually differs, so a new domain's pickers appear
-    // without a page reload - which is exactly what was reported.
-    if (TAB === 'today' &&
-        JSON.stringify(DATA.master || []) !== before) render();
-  }).catch(() => { MASTERQ = null; });
+  if (!DATA) return Promise.resolve();
+  if (MASTERQ) return MASTERQ;
+  MASTERQ = (async function(){
+    try {
+      do {
+        // An edit arriving during this await sets it back to true, which makes
+        // the loop fetch the final state once more.
+        MASTER_DIRTY = false;
+        let r = null;
+        try { r = await api('/api/master_list'); } catch (_e) {}
+        if (!r || r.error) continue;
+        if (r.master) DATA.master = r.master;
+        if (r.erp) DATA.erp = r.erp;
+        if (r.domain_status) DATA.domain_status = r.domain_status;
+        if (r.ship_conflicts) DATA.ship_conflicts = r.ship_conflicts;
+      } while (MASTER_DIRTY);
+    } finally {
+      MASTERQ = null;
+      // Redraw even when the four-key identity summary is textually the same:
+      // forgetParty() also cleared the detailed account cache. Without a
+      // redraw, existing combo boxes survived but opened against an empty
+      // PARTY object, so their Sold-To / Ship-To menus appeared blank.
+      if (TAB === 'today') render();
+    }
+  })();
   return MASTERQ;
 }
 
@@ -1930,31 +1945,59 @@ function pcBox(){
   return el;
 }
 
+// Put the body-level popup beside its owner. Both the rect and the popup use
+// VIEWPORT coordinates, so a horizontally scrolled Inbox card cannot move a
+// Ship-To menu off screen. Reused when an async account-list fetch finishes.
+function pcPlace(inp){
+  if (!inp) return;
+  const box = pcBox();
+  const wrap = inp.closest('.pcombo') || inp;
+  const r = wrap.getBoundingClientRect();
+  // Wider than the cell it hangs off: the cell is ~120px and the point of the
+  // popup is to read `code · ZIP · channel · site name` side by side.
+  const width = Math.min(Math.max(320, Math.round(r.width)),
+    Math.max(220, window.innerWidth - 12));
+  box.style.width = width + 'px';
+  box.style.minWidth = width + 'px';
+  box.style.left = Math.round(Math.max(6,
+    Math.min(r.left, window.innerWidth - width - 6))) + 'px';
+  const h = box.offsetHeight;
+  const below = r.bottom + 3;
+  box.style.top = Math.round(below + h > window.innerHeight - 8
+    ? Math.max(8, r.top - h - 3) : below) + 'px';
+}
+
+// If a master edit cleared PARTY while this already-rendered box stayed on
+// screen, refill this one domain directly. The normal Inbox path still batches
+// every domain through needParty(); this is only the race-safe fallback.
+function pcLoad(inp){
+  const wrap = inp.closest('.pcombo') || inp;
+  const domain = wrap.dataset.pc;
+  if (!domain || PARTY[domain] || PARTYQ[domain] || !domainKnown(domain)) return;
+  PARTYQ[domain] = true;
+  api('/api/party_options', {domain: domain}).then(r => {
+    PARTY[domain] = (r && !r.error) ? r : {sold_tos: [], ship_tos: []};
+  }).catch(() => {
+    PARTY[domain] = {sold_tos: [], ship_tos: []};
+  }).finally(() => {
+    delete PARTYQ[domain];
+    const box = pcBox();
+    if (PCS.owner === inp && !box.hidden){ pcFill(inp, ''); pcPlace(inp); }
+  });
+}
+
 // Open the popup under `inp`, flipping above when there is no room below.
-// Coordinates are PAGE coordinates (see the #pcmenu rule): the rect is in the
-// viewport, so the scroll offset is added back.
 function pcOpen(inp){
   if (!inp || inp.disabled) return;
   PCS.owner = inp;
   const box = pcBox();
-  const wrap = inp.closest('.pcombo') || inp;
-  const r = wrap.getBoundingClientRect();
-  const sx = window.scrollX || 0, sy = window.scrollY || 0;
-  // Wider than the cell it hangs off: the cell is ~120px and the point of the
-  // popup is to read `code · ZIP · channel · site name` side by side.
-  box.style.minWidth = Math.max(320, Math.round(r.width)) + 'px';
-  box.style.left = Math.round(
-    sx + Math.max(6, Math.min(r.left, window.innerWidth - 350))) + 'px';
   box.hidden = false;
+  pcLoad(inp);
   // Opened, not typed into: show the whole list with the current value
   // highlighted. Filtering by what is already in the box would leave exactly
   // one row - the value itself - and no way to browse from there.
   pcFill(inp, '');
-  // Measured AFTER unhiding: a hidden element has no height.
-  const h = box.offsetHeight;
-  const below = r.bottom + 3;
-  box.style.top = Math.round(sy + (below + h > window.innerHeight - 8
-    ? Math.max(8, r.top - h - 3) : below)) + 'px';
+  pcPlace(inp);
 }
 
 function pcClose(){
@@ -2008,6 +2051,7 @@ function pcFill(inp, q){
   let h = '<div class="mphead">' + (all.length
     ? (q ? hits.length + ' of ' + all.length : all.length) +
       ' account number(s)' + (hits.length > PC_MAX ? ' — ' + PC_MAX + ' shown' : '')
+    : PARTYQ[domain] ? 'loading account numbers…'
     : 'no account number on file for this customer') + '</div>';
   // Typed something the master does not carry: offer it as-is, in blue, so
   // "use what I typed" is a visible choice rather than a hidden one. Only for
@@ -2277,6 +2321,16 @@ function patchParties(domains){
     td.innerHTML = partyCellRaw(sp.dataset.pwait, sp.dataset.pkind,
       sp.dataset.pstored || '', sp.dataset.psold || '', +sp.dataset.pid);
   });
+  // A combo may already exist when forgetParty() clears its cache. If its
+  // menu was opened during the refetch, refresh that detached body-level
+  // popup too; replacing only loading placeholders would leave it blank.
+  if (PCS.owner && !pcBox().hidden){
+    const wrap = PCS.owner.closest('.pcombo');
+    if (wrap && want[wrap.dataset.pc]){
+      pcFill(PCS.owner, '');
+      pcPlace(PCS.owner);
+    }
+  }
 }
 
 function patchParty(domain){
@@ -4512,7 +4566,7 @@ async function addDomainRow(domain){
       'as soon as the two agree.')) return;
   const r = await api('/api/domain_row_add', {row: {domain: domain}});
   if (r.error){ alert(r.error); return; }
-  forgetParty();
+  await forgetParty();
   DOM.q = domain;
   DOM.offset = 0;
   TAB = 'master';
@@ -5503,10 +5557,14 @@ async function setDomCell(el){
   const i = +el.dataset.i, k = el.dataset.k, v = el.value.trim();
   const r = await api('/api/domain_row_set', {index: i, key: k, value: v});
   if (r && r.error){ alert(r.error); return; }
-  forgetParty();
   el.title = v;
   const row = DOM.rows.find(x => x._i === i);
   if (row) row[k] = v;
+  // The server has also reclassified stored mail. Wait for the identity and
+  // account caches, then pull those changed mail rows now; switching straight
+  // back to Inbox must not show the pre-edit dashboard until the next poll.
+  await forgetParty();
+  await load();
 }
 
 async function addDomRow(){
@@ -5528,7 +5586,7 @@ async function delDomRow(i){
       'domain loses its customer until the row is added back.')) return;
   const r = await api('/api/domain_row_del', {index: i});
   if (r.error){ alert(r.error); return; }
-  forgetParty();
+  await forgetParty();
   await load();
   toast('Domain row deleted');
 }
@@ -5542,7 +5600,7 @@ async function clearDomTable(){
   if (!confirm('Really delete all '+n+' domain rows?')) return;
   const r = await api('/api/domain_row_clear', {});
   if (r.error){ alert(r.error); return; }
-  forgetParty();
+  await forgetParty();
   DOM.offset = 0;
   await load();
   toast('Domain table cleared ('+(r.removed || 0)+' rows)');
@@ -5560,7 +5618,7 @@ function uploadDomains(){
     const r = await api('/api/domain_table_upload',
       {filename: f.name, data: fr.result.split(',')[1]});
     if (r.error){ alert(r.error); return; }
-    forgetParty();
+    await forgetParty();
     let m = 'Read '+r.rows+' row(s).\\n\\n'+
       'Distinct domains: '+r.domains+'\\n'+
       'Customer names: '+r.named;

@@ -683,6 +683,15 @@ def main_ui():
              "' account number(s)'" in html, ""),
             ("opening the box does not filter by its own value",
              "pcFill(inp, '');" in html, ""),
+            ("the account popup is fixed to the viewport, above the table",
+             "#pcmenu { position:fixed; z-index:4000;" in html
+             and "function pcPlace(inp){" in html, ""),
+            ("an open popup is repainted when async account data arrives",
+             "if (PCS.owner === inp && !box.hidden){ pcFill(inp, ''); pcPlace(inp); }"
+             in html, ""),
+            ("a stale rendered picker can reload its own domain",
+             "function pcLoad(inp){" in html
+             and "api('/api/party_options', {domain: domain})" in html, ""),
             # Enter with no highlighted row writes what is typed; Escape puts
             # back what was saved rather than clearing the field.
             ("Escape restores the saved value",
@@ -3333,7 +3342,45 @@ def run_p0():
           '"/api/master_list"' in src)
     check("the page re-reads it whenever the account cache is dropped",
           "function refreshMasterList(){" in page
-          and "  refreshMasterList();" in page)
+          and "return refreshMasterList();" in page)
+    check("rapid domain edits cannot leave an intermediate master cached",
+          "MASTER_DIRTY = true;" in page
+          and "} while (MASTER_DIRTY);" in page)
+    check("a master refresh always redraws Inbox account pickers",
+          "if (TAB === 'today') render();" in page
+          and "existing combo boxes survived" in page)
+    check("domain writes automatically reclassify stored Inbox mail",
+          src.count("_reclassify_stored_mails(") >= 7
+          and 'elif self.path == "/api/domain_row_set":' in src)
+
+    # The reconciliation is symmetric: adding a domain claims old mail, and
+    # deleting it must clear the stale customer again. The old Apply-master
+    # loop only did the first half and required a separate button click.
+    dbbase = tempfile.mkdtemp(prefix="ofreclass_")
+    db = os.path.join(dbbase, "mail.db")
+    conn = store.connect(db)
+    try:
+        store.insert_mail(conn, {
+            "message_id": "reclass-1", "received_at": "2026-10-29T10:00:00",
+            "sender": "buyer@newco.com", "sender_domain": "newco.com",
+            "subject": "PO", "attachments": [], "pdf_paths": [],
+            "customer": "", "po_number": "1"})
+        server_mod = sys.modules[OF.server.make_handler.__module__]
+        changed, matched = server_mod._reclassify_stored_mails(conn, [{
+            "customer": "newco.com", "domains": ["newco.com"],
+            "role": "Retail"}])
+        claimed = store.get_mail(conn, 1)
+        check("a newly added domain claims already-stored mail immediately",
+              changed == 1 and matched == 1
+              and claimed["customer"] == "newco.com", str(claimed))
+        changed, matched = server_mod._reclassify_stored_mails(conn, [])
+        cleared = store.get_mail(conn, 1)
+        check("removing the domain clears its stale stored classification",
+              changed == 1 and matched == 0 and not cleared["customer"],
+              str(cleared))
+    finally:
+        conn.close()
+        shutil.rmtree(dbbase, ignore_errors=True)
     # The customer filter became a multi-pick: a desk compares two or three
     # customers at a time, and a single-select forced a re-pick for each one.
     check("the customer filter is a multi-pick",

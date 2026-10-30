@@ -1571,6 +1571,19 @@ drawn *before* the account list arrives is a `data-pwait` placeholder, not a `<s
 `patchParty()` rebuilds those cells too, so a picker appears when the answer lands instead of
 waiting for the 60 s poll (see 6.5).
 
+Rapid grid edits are a third cache boundary. A second Domain cell can be saved while the
+refresh caused by the first is still running; `MASTER_DIRTY` records that later write and
+forces another `/api/master_list` pass. Completion always redraws Inbox because the detailed
+`PARTY` cache may have changed even when the four-key identity summary is identical. An
+already rendered picker can also refill its own domain through `pcLoad()` if it is opened in
+the short interval between invalidation and the redraw.
+
+Domain-table writes also call `_reclassify_stored_mails()` on the server. Adding or uploading
+a domain therefore claims mail that was collected before the row existed without requiring a
+separate **Apply master** click; deleting or clearing a domain symmetrically removes stale
+classifications. The browser waits for the small master refresh and reloads dashboard mail
+after an inline Domain edit, so the change is visible as soon as the user returns to Inbox.
+
 ### 6.2.1 One domain, one customer — the ambiguity rules
 
 Domain identity is only safe if a domain cannot mean two things, so the model defends that
@@ -2110,9 +2123,11 @@ rather than a text field.
     nothing.
   - ⚠️ **The popup is `#pcmenu`, shipped in the page at the end of `<body>`.** Not inside the
     cell: `table.fixed td { overflow:hidden }` would clip it, and the table scrolls sideways
-    inside `.cardbody`. It is `position:absolute` with page coordinates (scroll offset added
-    back) and is **closed on any scroll, resize or outside click** — a popup anchored to a
-    rect cannot follow its cell.
+    inside `.cardbody`. It is `position:fixed` with viewport coordinates and a high stacking
+    level; `pcPlace()` clamps it to the visible window and flips it above the input when
+    needed. This avoids a Ship-To menu being positioned outside the visible card after its
+    horizontally scrolled Sold-To row changes. It is **closed on any scroll, resize or
+    outside click** — a popup anchored to a rect cannot follow its cell.
   - The Quick Convert card uses the same component (`qPartyCombo`, `data-pquick`), where a
     commit calls `qPartySet()` instead of saving to a mail row.
 - **Each row of the popup leads with the account number and carries the ZIP —
