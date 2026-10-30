@@ -850,6 +850,24 @@ two had vanished. Now the two are on screen, amber, unticked, with the reason.
 The safety property is unchanged — the line still needs a human — but the human
 can now see what they are deciding about.
 
+#### 4.4a Exact SKU-prefix suffix completion
+
+Before the Product Mapping Table's short-SKU rewrite, `normalise_to_master()`
+now checks the Material Code list itself for one stricter case: the PO code must
+equal, character-for-character (case aside), the complete text before a known
+suffix. For example, `RF23CB9900QK` resolves to `RF23CB9900QKAA` when that is
+the only FULL SKU with the literal base; the same rule covers slash forms such
+as `/A3`. It does not strip arbitrary characters or grow prefixes.
+
+This rule deliberately bypasses `sku_map`, so a missing or stale short-SKU row
+cannot block the exact data-backed repair. If more than one FULL SKU has the
+same literal base, this new rule does not choose between them. A successful
+repair is included automatically because the result is an exact Material Code,
+but carries `suffix_autofilled`, `suffix_original`, and
+`normalisation_warning` through `prepare_lines()` to Quick Convert. The row and
+its summary note stay amber with **suffix added — verify**, satisfying the rule
+that every correction must be visible.
+
 Confirm (the mail path) has no per-line checkbox, so there a flagged line is
 shown in the message and **left out** of the file: "3 line(s) NOT written —
 their code is not in the Material Code list: …". Quick Convert is where you

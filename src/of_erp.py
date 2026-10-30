@@ -809,6 +809,7 @@ def prepare_lines(results, mail=None, keep_dropped=False):
       back in (Quick Convert). The mail Confirm path leaves them out.
     Returns: (lines, no_qty, no_cost, dropped, fixes)
       lines: [{po, code, qty, cost, include, needs_review, review_reason,
+               suffix_autofilled, suffix_original, normalisation_warning,
                order}]
       fixes: human-readable notes about every value that was corrected
 
@@ -915,6 +916,15 @@ def prepare_lines(results, mail=None, keep_dropped=False):
                         "include": include,
                         "needs_review": bool(rec.get("needs_review")),
                         "review_reason": str(rec.get("review_reason") or ""),
+                        # A safe, unique suffix completion is included, but it
+                        # remains visibly amber so the operator can verify the
+                        # inferred FULL SKU before download.
+                        "suffix_autofilled": bool(
+                            rec.get("suffix_autofilled")),
+                        "suffix_original": str(
+                            rec.get("suffix_original") or ""),
+                        "normalisation_warning": str(
+                            rec.get("normalisation_warning") or ""),
                         # The order this line was printed on, so the writer can
                         # give the row that order's address and dates instead of
                         # one set borrowed from the first order in the document.

@@ -1441,10 +1441,17 @@ def convert(paths, settings, po_number="", sold_to="", ship_to=""):
                              if l.get("order") else None),
                    "needs_review": bool(l.get("needs_review")),
                    "review_reason": l.get("review_reason") or "",
-                   "note": (l.get("review_reason")
-                            if l.get("needs_review") else
-                            "" if l["include"] else
-                            "quoted in a description?")}
+                   "suffix_autofilled": bool(l.get("suffix_autofilled")),
+                   "suffix_original": l.get("suffix_original") or "",
+                   "normalisation_warning": (
+                       l.get("normalisation_warning") or ""),
+                   "note": (
+                       l.get("review_reason")
+                       if l.get("needs_review") else
+                       l.get("normalisation_warning")
+                       if l.get("suffix_autofilled") else
+                       "" if l["include"] else
+                       "quoted in a description?")}
                   for l in lines][:200],
     }
 
@@ -1618,6 +1625,45 @@ def _code_base(code, material_master):
     return material_master.norm(str(code or "").split("/")[0])
 
 
+_SLASH_SKU_SUFFIX = re.compile(r"^(.+)/([A-Z0-9]{2,3})$", re.IGNORECASE)
+
+
+def _exact_suffix_base(code):
+    """The literal SKU text before a recognised market suffix.
+
+    This is deliberately stricter than `_code_base()`: the new automatic
+    repair is allowed only when the PO text exactly equals what precedes the
+    suffix in one master code (case aside). It does not remove punctuation or
+    grow a prefix. The master currently carries slash suffixes such as /A3 and
+    a newer glued `AA` form such as RF23CB9900QKAA.
+    """
+    text = str(code or "").strip()
+    match = _SLASH_SKU_SUFFIX.fullmatch(text)
+    if match:
+        return match.group(1)
+    if len(text) > 2 and text.upper().endswith("AA"):
+        return text[:-2]
+    return ""
+
+
+def _exact_suffix_index(codes):
+    """{literal base uppercase: [master FULL SKU, ...]} from code data only.
+
+    The Product Mapping Table's short-SKU column is intentionally not used.
+    A caller may auto-fill only when the returned list has exactly one value.
+    """
+    out = {}
+    for entry in (codes or {}).values():
+        full = str((entry or {}).get("code") or "").strip()
+        base = _exact_suffix_base(full)
+        if not base:
+            continue
+        values = out.setdefault(base.upper(), [])
+        if full not in values:
+            values.append(full)
+    return out
+
+
 def _backbone_class(settings):
     """code_rules.BackboneIndex - the matcher the engine gates on, and the one
     this rewrite uses. ONE set of rules for what a code is."""
@@ -1631,15 +1677,21 @@ def normalise_to_master(results, settings):
     Excel PO used must be replaced by the listed one. Shared by the mail
     Confirm path and by Quick Convert so both produce identical codes.
 
-    Two rewrites run, in this order:
+    Three rewrites run, in this order:
 
-    1. **short SKU → FULL SKU**, from the Product Mapping Table's `sku_map`. A
+    1. **exact base → unique suffixed FULL SKU**, from the Material Code list
+       itself. `RF23CB9900QK` may become `RF23CB9900QKAA`, and a base may
+       become its unique `/A3` listing. This deliberately runs before and does
+       not consult the short-SKU table. Several FULL SKUs with the same literal
+       base are ambiguous and are never resolved by this rule. Every applied
+       repair is marked on the record so the review UI can highlight it.
+    2. **short SKU → FULL SKU**, from the Product Mapping Table's `sku_map`. A
        PO prints the short SKU and ERP is keyed on the FULL SKU, so this is what
        makes a mapped SKU land in the right place. The mapping table is the
        authority, never a string rule - 110 of its real rows have a short SKU
        that is not a prefix of its FULL SKU. A short SKU that maps to several
        FULL SKUs is left alone for a human, never guessed.
-    2. **spelling → the listed spelling**, through the engine's own
+    3. **spelling → the listed spelling**, through the engine's own
        `BackboneIndex`, built from the master: ONE set of matching rules for
        extraction and for this rewrite. Keeping a second, simpler rule here is
        what broke glued market suffixes: the engine knew "DW80CG4051SR" is
@@ -1661,6 +1713,7 @@ def normalise_to_master(results, settings):
 
         index = _backbone_class(settings)(
             {e["code"]: e for e in codes.values() if e.get("code")})
+        exact_suffixes = _exact_suffix_index(codes)
 
         # Market variants that share a base ("RF23A9671SR/AA", ".../A3")
         variants = {}
@@ -1672,12 +1725,41 @@ def normalise_to_master(results, settings):
         for r in results:
             for rec in r.get("records", []):
                 raw = rec.get("material_code")
-                # 1) short SKU -> FULL SKU, from the mapping table
-                full = material_master.sku_full(settings, raw or "")
+                raw_text = str(raw or "").strip()
+
+                # 1) Literal base -> one FULL SKU from the code master itself.
+                # An exact code already in the master must stay exact even if
+                # it is also the base of a suffixed variant.
+                exact_hit = material_master.lookup(mm, raw_text)
+                suffix_candidates = ([] if exact_hit else
+                                     exact_suffixes.get(raw_text.upper(), []))
+                suffix_full = (suffix_candidates[0]
+                               if len(suffix_candidates) == 1 else "")
+                if suffix_full:
+                    rec["suffix_autofilled"] = True
+                    rec["suffix_original"] = raw_text
+                    rec["normalisation_warning"] = (
+                        f"Suffix added from Material Code data: {raw_text} -> "
+                        f"{suffix_full}. Verify before upload.")
+                    # The target is an exact master code, so a prior extractor
+                    # review on the unsuffixed spelling is now resolved. It is
+                    # included automatically, but remains amber in the UI.
+                    rec["needs_review"] = False
+                    rec["review_reason"] = ""
+                    rec["backbone_code"] = suffix_full
+                    rec["match_type"] = "suffix_autofill"
+                    fixed.append(
+                        f"{raw_text} -> {suffix_full} (suffix auto-added from "
+                        "an exact Material Code match; verify)")
+
+                # 2) short SKU -> FULL SKU, from the mapping table. The exact
+                # suffix match above intentionally outranks this mapping.
+                full = (suffix_full or
+                        material_master.sku_full(settings, raw_text))
                 code = full or raw
-                if full and full != raw:
+                if full and full != raw and not suffix_full:
                     fixed.append(f"{raw} -> {full} (short SKU)")
-                # 2) -> the listed spelling
+                # 3) -> the listed spelling
                 hit = material_master.lookup(mm, code)
                 listed = (hit or {}).get("code") or ""
                 if not listed:

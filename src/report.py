@@ -452,6 +452,10 @@ PAGE = """<!DOCTYPE html>
      until somebody ticks it, so the colour is a prompt, not an alarm. */
   tr.needrow td { background:var(--amber-soft); }
   tr.needrow td:first-child { box-shadow:inset 3px 0 0 var(--amber); }
+  /* A unique suffix repair is safe enough to include automatically, but it is
+     still a data correction and therefore remains conspicuously reviewable. */
+  tr.fixrow td { background:var(--amber-soft); }
+  tr.fixrow td:first-child { box-shadow:inset 3px 0 0 var(--amber); }
   .needpill { display:inline-block; margin-left:6px; padding:1px 7px;
     border-radius:999px; font-size:10.5px; font-weight:700;
     background:#fef3c7; color:#92400e; white-space:nowrap; }
@@ -4768,6 +4772,14 @@ function quickResultCard(){
       '<b>unticked and will not be written</b> until you tick them. Check the '+
       'model against the PO, or approve the code on Master Data &gt; '+
       'Material Codes.</div>';
+  const nSuffix = lines.filter(l => l.suffix_autofilled).length;
+  if (nSuffix)
+    h += '<div class="cardnote" style="margin:0 0 12px; '+
+      'border-color:var(--amber); background:var(--amber-soft)">'+
+      '<b>'+nSuffix+' line(s) had a SKU suffix added automatically.</b> '+
+      'The PO code exactly matched the text before one unique FULL SKU '+
+      'suffix in Material Code data. These lines are included, but please '+
+      '<b>verify the amber correction</b> before downloading.</div>';
   if (!onlySimple) h += qPartyRow();
   // A file holding several POs needs the P/O No. on every row: it is column A
   // of the upload, and two rows with the same model and quantity are otherwise
@@ -4781,14 +4793,19 @@ function quickResultCard(){
     // needs_review: the code is not in the Material Code list. Shown, amber,
     // and unticked - the line only reaches the ERP file once it is ticked.
     const rv = !!l.needs_review;
-    const warn = !rv && on && ((l.qty === '' || l.qty === null) ||
+    const sf = !!l.suffix_autofilled;
+    const warn = !rv && !sf && on && ((l.qty === '' || l.qty === null) ||
                                (l.cost === '' || l.cost === null));
-    h += '<tr'+(rv ? ' class="needrow"' : (warn ? ' class="warnrow"' : ''))+
+    h += '<tr'+(rv ? ' class="needrow"' :
+      (sf ? ' class="fixrow"' : (warn ? ' class="warnrow"' : '')))+
       (on ? '' : ' style="opacity:.55"')+'>'+
       '<td><input type="checkbox" style="width:auto"'+(on?' checked':'')+
         ' title="'+(rv
           ? 'This code is NOT in the Material Code list. Tick to include it '+
             'anyway - check the model against the PO first.'
+          : sf
+          ? 'A unique SKU suffix was added from Material Code data. This line '+
+            'is included; verify the corrected FULL SKU before download.'
           : 'Include in the Order Upload file')+'" '+
         'onchange="qUse('+i+',this.checked)"></td>'+
       // The P/O No. of the order this row was printed on. Only shown when the
@@ -4798,6 +4815,7 @@ function quickResultCard(){
       '<td><input type="text" value="'+esc(l.code)+'" '+
         'oninput="qEdit('+i+',\\'code\\',this.value)">'+
         (rv ? '<span class="needpill">not in the code list</span>' : '')+
+        (sf ? '<span class="needpill">suffix added — verify</span>' : '')+
         (l.note ? '<div class="fhint">'+esc(l.note)+'</div>' : '')+'</td>'+
       '<td><input type="text" value="'+esc(l.qty)+'" placeholder="—" '+
         'oninput="qEdit('+i+',\\'qty\\',this.value)"></td>'+

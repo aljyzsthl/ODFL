@@ -186,7 +186,7 @@ MUST_CONTAIN = [
     "Download Order Upload", "quickDoneCard", "qReopen", "qScan",
     "PO folder", "set-attonly", "Unknown codes found in POs",
     "Material Code List", "fmtSeg", "toggleErpFmt", "erpFmts", "fmtChip",
-    "/api/erp_format",
+    "/api/erp_format", "suffix_autofilled", "suffix added — verify",
     # Ship-To Locations: the master itself, editable
     "uploadErp", "Ship-To locations", "shipTable", "shipConfSet",
     "setShipCell", "addShipRow", "delShipRow", "clearShipMaster",
@@ -1286,13 +1286,13 @@ The rules under test (the match uses the engine's own BackboneIndex):
 import orderflow as B  # noqa: E402
 
 
-def make_settings(codes):
-    """codes: [full_code, ...] -> a temp settings dict with that master loaded"""
+def make_settings(codes, sku_map=None):
+    """Build a temporary Material Code master, optionally with short mappings."""
     import orderflow as material_master
     base = tempfile.mkdtemp(prefix="ofb_")
     cfg = os.path.join(base, "config")
     os.makedirs(cfg, exist_ok=True)
-    data = {"codes": {}}
+    data = {"codes": {}, "sku_map": sku_map or {}}
     for full in codes:
         data["codes"][material_master.norm(full)] = {
             "code": full, "product": "DA", "cate1": "", "cate2": "",
@@ -1358,6 +1358,58 @@ def run_bridge():
               got == "RF23A9671SR/AA", f"got {got!r}, fixed={fixed}")
         check("unique base: reported in the fixed list", bool(fixed),
               f"fixed={fixed}")
+        repaired = results[0]["records"][0]
+        check("unique base: repair carries an amber-review marker",
+              repaired.get("suffix_autofilled") is True
+              and repaired.get("suffix_original") == "RF23A9671SR"
+              and "Verify" in repaired.get("normalisation_warning", ""),
+              str(repaired))
+        prepared, _nq, _nc, _dropped, _fixes = (
+            B.erp_excel.prepare_lines(results, {}, keep_dropped=True))
+        check("unique base: included automatically and marker survives export prep",
+              prepared[0]["include"] is True
+              and prepared[0].get("suffix_autofilled") is True,
+              str(prepared[0]))
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+    # 2b - the exact, unique Material Code relationship outranks a stale
+    # short-SKU mapping. This is the point of running the new rule first.
+    import orderflow as material_master
+    stale_map = {
+        material_master.norm("RF23CB9900QK"): {
+            "short": "RF23CB9900QK", "full": "WRONGSKU/AA",
+            "group": "", "group2": ""}}
+    settings, base = make_settings(
+        ["RF23CB9900QKAA", "WRONGSKU/AA"], stale_map)
+    try:
+        results = [rec("RF23CB9900QK")]
+        results[0]["records"][0].update({
+            "needs_review": True, "review_reason": "old gate warning"})
+        fixed, unknown, err = B.normalise_to_master(results, settings)
+        repaired = results[0]["records"][0]
+        check("exact glued base bypasses a stale short-SKU mapping",
+              repaired["material_code"] == "RF23CB9900QKAA",
+              f"record={repaired}, fixed={fixed}, unknown={unknown}, err={err}")
+        check("safe suffix repair clears the old hold but stays highlighted",
+              not repaired.get("needs_review")
+              and repaired.get("suffix_autofilled")
+              and repaired.get("match_type") == "suffix_autofill",
+              str(repaired))
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+    # 2c - not just /AA: any unique slash suffix in the master follows the
+    # same exact-prefix rule.
+    settings, base = make_settings(["RF23A9671SR/A3"])
+    try:
+        results = [rec("RF23A9671SR")]
+        B.normalise_to_master(results, settings)
+        repaired = results[0]["records"][0]
+        check("unique /A3 suffix is completed and highlighted",
+              repaired["material_code"] == "RF23A9671SR/A3"
+              and repaired.get("suffix_autofilled") is True,
+              str(repaired))
     finally:
         shutil.rmtree(base, ignore_errors=True)
 
@@ -1372,6 +1424,9 @@ def run_bridge():
             check(f"/AA and /A3 ({order[0][-3:]} listed first): /AA chosen",
                   got == "RF23A9671SR/AA" and not unknown,
                   f"got {got!r}, unknown={unknown}, err={err}")
+            check("ambiguous exact suffix candidates do not use the new rule",
+                  not results[0]["records"][0].get("suffix_autofilled"),
+                  str(results[0]["records"][0]))
         finally:
             shutil.rmtree(base, ignore_errors=True)
 
