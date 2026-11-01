@@ -3876,7 +3876,7 @@ def run_extract():
               res["records"][0]["backbone_code"] == "RF22A4111SR",
               f"{res['records']}")
         check("extraction_mode says where the reading came from",
-              res["extraction_mode"] == "deepseek")
+              res["extraction_mode"] == "claude")
         check("the extraction is cached, so a re-run costs no API call",
               (claude_engine.load_cache(cache) or {}).get("po_number")
               == "4512")
@@ -4008,13 +4008,18 @@ def run_extract():
             claude_engine.SETTINGS_PATH = sp
             import json as _json
             with open(sp, "w", encoding="utf-8") as f:
-                _json.dump({"deepseek": {"model": "deepseek-flash"}}, f)
+                _json.dump({"claude": {"model": "claude-haiku-4-5"}}, f)
             check("the Settings model overrides the config file",
                   claude_engine.load_config().get("model")
-                  == "deepseek-flash",
+                  == "claude-haiku-4-5",
                   claude_engine.load_config().get("model"))
+            sig_after = claude_engine.config_signature()
             with open(sp, "w", encoding="utf-8") as f:
-                _json.dump({"deepseek": {"model": "not-a-model"}}, f)
+                _json.dump({"claude": {"model": "claude-opus-5"}}, f)
+            check("...and switching it invalidates the cache",
+                  claude_engine.config_signature() != sig_after)
+            with open(sp, "w", encoding="utf-8") as f:
+                _json.dump({"claude": {"model": "not-a-model"}}, f)
             check("an unknown model ID is ignored, not sent",
                   claude_engine.load_config().get("model") == base_model,
                   claude_engine.load_config().get("model"))
@@ -4063,13 +4068,15 @@ def run_extract():
     finally:
         shutil.rmtree(tmp2, ignore_errors=True)
 
-    # ---- the DeepSeek Anthropic-compatible endpoint contract ---------------
+    # ---- the endpoint contract from "SEA Claude API Guide" ----------------
+    # This is the part that fails silently if it drifts: the private endpoint
+    # authenticates with Authorization: Bearer, not x-api-key.
     hdr = claude_engine.auth_header("T0K3N")
-    check("the key is sent as x-api-key",
-          hdr.get("x-api-key") == "T0K3N", f"{hdr}")
-    check("...and NOT as a Bearer token",
-          "Authorization" not in hdr, f"{hdr}")
-    check("the compatibility version header is still sent",
+    check("the key is sent as a Bearer token",
+          hdr.get("Authorization") == "Bearer T0K3N", f"{hdr}")
+    check("...and NOT as x-api-key",
+          "x-api-key" not in hdr, f"{hdr}")
+    check("the version header the guide shows is still sent",
           claude_engine.API_VERSION == "2023-06-01",
           claude_engine.API_VERSION)
 
@@ -4082,18 +4089,18 @@ def run_extract():
         got = claude_engine._resolve_url(raw)
         check(f"endpoint {raw} -> {want}", got == want, f"got {got}")
 
-    check("the shipped endpoint is DeepSeek's Anthropic-compatible root",
+    check("the shipped endpoint is the one in the guide",
           claude_engine.DEFAULT_BASE_URL
-          == "https://api.deepseek.com/anthropic",
+          == "https://seadev-claude.sec.samsung.net:8081",
           claude_engine.DEFAULT_BASE_URL)
-    check("only the vision-capable DeepSeek model is offered",
-          {"deepseek-flash"} == set(claude_engine.KNOWN_MODELS),
+    check("every model the guide lists is known",
+          {"claude-sonnet-5", "claude-opus-5", "claude-sonnet-4-6",
+           "claude-haiku-4-5"} == set(claude_engine.KNOWN_MODELS),
           f"{sorted(claude_engine.KNOWN_MODELS)}")
     check("the default model is one the guide lists",
           claude_engine.DEFAULTS["model"] in claude_engine.KNOWN_MODELS,
           claude_engine.DEFAULTS["model"])
 
-    # DeepSeek rejects a forced named tool_choice while thinking is enabled.
     # Capture the outgoing extraction payload without making a network call.
     sent = {}
     old_post = claude_engine._post
@@ -4102,29 +4109,23 @@ def run_extract():
             sent.update(payload)
             return {"content": [{"type": "tool_use", "input": {"orders": []}}]}
         claude_engine._post = _capture_post
-        claude_engine._call(
-            [{"type": "text", "text": "probe"}]
-            + [{"type": "image"} for _ in range(4)],
-            claude_engine.load_config())
+        claude_engine._call([{"type": "text", "text": "probe"}],
+                            claude_engine.load_config())
     finally:
         claude_engine._post = old_post
-    check("DeepSeek extraction disables thinking for forced tool_choice",
-          sent.get("thinking") == {"type": "disabled"}, str(sent.get("thinking")))
     check("the extraction tool remains explicitly forced",
           sent.get("tool_choice", {}).get("type") == "tool")
-    check("multi-page PDFs get enough room for their structured line items",
-          sent.get("max_tokens") >= 20_000, str(sent.get("max_tokens")))
 
-    # A rejected key must say x-api-key, because that is the wire format.
+    # A rejected key must say Bearer, because that is the fix.
     msg = claude_engine._plain_error(401, "invalid token", "https://h/v1/messages")
     check("a 401 tells you the token is the problem", "rejected the key" in msg, msg)
-    check("...and names the header form to check", "x-api-key" in msg, msg)
+    check("...and names the header form to check", "Bearer" in msg, msg)
     msg = claude_engine._plain_error(404, "", "https://h/v1/messages")
     check("a 404 says the base URL is wrong", "base URL" in msg, msg)
     msg = claude_engine._plain_error(400, '{"error":"model not found"}',
                                      "https://h/v1/messages")
     check("an unknown model names the ones that work",
-          "deepseek-flash" in msg, msg)
+          "claude-sonnet-5" in msg, msg)
 
     # ---- a document that is not a PDF is refused plainly -----------------
     junk = os.path.join(tempfile.mkdtemp(prefix="ofextract_"), "x.pdf")
@@ -4140,35 +4141,23 @@ def run_extract():
     finally:
         shutil.rmtree(os.path.dirname(junk), ignore_errors=True)
 
-    # DeepSeek has no PDF document block. A valid PDF must become one image
-    # block per page, plus the instruction text, before it reaches /messages.
-    rendered = tempfile.mkdtemp(prefix="ofdeepseek_")
+    # Claude accepts the PDF as a document block, so no local renderer belongs
+    # in the main branch's request path.
+    rendered = tempfile.mkdtemp(prefix="ofclaude_")
     try:
-        import pymupdf as fitz
-        pdf = os.path.join(rendered, "two-pages.pdf")
-        doc = fitz.open()
-        for label in ("PAGE ONE", "PAGE TWO"):
-            page = doc.new_page(width=300, height=400)
-            page.insert_text((40, 80), label)
-        doc.save(pdf)
-        doc.close()
-        blocks = claude_engine._pdf_blocks(
-            pdf, dict(claude_engine.load_config(), pdf_dpi=72))
-        images = [b for b in blocks if b.get("type") == "image"]
-        check("a PDF is rendered to one DeepSeek image per page",
-              len(images) == 2, f"{len(images)} images")
-        check("rendered pages are inline JPEG blocks",
-              all(i.get("source", {}).get("media_type") == "image/jpeg"
-                  and i.get("source", {}).get("type") == "base64"
-                  and i.get("source", {}).get("data") for i in images))
-        check("the PDF document block is gone",
-              not any(b.get("type") == "document" for b in blocks))
-        markers = [b.get("text") for b in blocks
-                   if b.get("type") == "text"
-                   and "BEGIN PDF PAGE" in b.get("text", "")]
-        check("every rendered image has an explicit page-boundary marker",
-              markers == ["--- BEGIN PDF PAGE 1 OF 2 ---",
-                          "--- BEGIN PDF PAGE 2 OF 2 ---"], str(markers))
+        pdf = os.path.join(rendered, "one.pdf")
+        with open(pdf, "wb") as f:
+            f.write(b"%PDF-1.4\nprobe\n%%EOF\n")
+        blocks = claude_engine._pdf_blocks(pdf, claude_engine.load_config())
+        docs = [b for b in blocks if b.get("type") == "document"]
+        check("a PDF is sent as one Claude document block",
+              len(docs) == 1, f"{len(docs)} document blocks")
+        check("the document block carries base64 PDF data",
+              docs[0].get("source", {}).get("media_type") == "application/pdf"
+              and docs[0].get("source", {}).get("type") == "base64"
+              and bool(docs[0].get("source", {}).get("data")))
+        check("the main branch does not render image blocks",
+              not any(b.get("type") == "image" for b in blocks))
     finally:
         shutil.rmtree(rendered, ignore_errors=True)
 
