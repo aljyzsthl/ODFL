@@ -261,13 +261,14 @@ in both this filter and `run_extractor()`, or it will fail the same way.
 
 **The Inbox is three tabs — Inbox / Read / Output — and they ARE the pipeline**
 (2026-10-28, 4.3a). One `ITAB` decides which is drawn; there is no step bar any
-more. `Extract` on a row sends it to **Read** (radar, then the preview with the
-format choice), `Generate` lands in **Output** with the file(s) on a banner.
+more. `Extract` on a row sends it to the fixed **Read** list (the row shows a
+waveform in place of Generate while extraction runs), and `Generate` lands in
+**Output** with the file(s) on a banner.
 
 | Screen | Render function | Notes |
 |---|---|---|
 | Inbox **tab 1** | `inboxList` | POs by date. Status (Not yet/Pending/Done/Rejected/Not a PO), attachment links, **Extract** / **Discard**. Carries the **customer multi-pick** (multi-select tick list), the **Sold-To / Ship-To drop-downs** in columns F/G (6.7.2) with the site's ZIP under the Ship-To one, and the **editable Address** box beside them (6.7.2). The Customer column holds the **domain**. The output format is chosen later, on the preview |
-| Read **tab 2** | `readPanel` | the extraction-cache register (`/api/read_list`), one row per ORDER with its own Full/Simple switch and **Generate**. While a reading is open it is replaced by `readFlowPage()`: the radar, then the preview |
+| Read **tab 2** | `readPanel` | the extraction-cache register (`/api/read_list`), one row per ORDER with its own Full/Simple switch and **Generate**. The list never changes shape: an in-flight synthetic row uses `.wave-menu` where Generate will appear. The first disclosure shows account/address/date fields; its nested **SKU details** disclosure shows line items |
 | Output **tab 3** | `renderCompleted` | **one screen for Completed and Order Upload** (they were the same rows seen from two ends): every confirmed PO of the day, its generated Order Upload file(s) (badged Full form / Simple) and its ERP status, with **Mark uploaded** / **Undo** in the row. `outBanner()` sits on top for the write that just happened |
 | Discarded | `renderNotMyPO` | non-PO mail (`excluded=1`), with **Rescue** to put one back |
 | **Quick Convert** | `renderQuick` | drop a PO file → code/qty/unit cost only → Order Upload; the same Full/Simple switch plus a Domain / Sold-To / Ship-To picker on the review card (only when Simple is not the only version — the simple sheet has no account columns) |
@@ -560,16 +561,17 @@ The response is a **forced tool call** (`tool_choice`), not prose with JSON in
 it. That is what makes the gate possible: the engine always gets a structured
 payload, or an error — never a paragraph it has to parse.
 
-### 4.3a Extract is two steps: read+preview, then generate (2026-10-22/23/28)
+### 4.3a Extract is two steps: read in place, then generate (2026-10-30)
 
 **The order of work is in the three Inbox tabs — there is no stepper any more.**
 
 ```
-Inbox      the list, filters + search            → Extract on a row
-Read       first the radar (one API call),       → pick the format, Generate
-           then the preview: format at the top,
-           then the columns the file will hold
-Output     the file(s) on a banner, the row in the list below
+Inbox      the list, filters + search                 → Extract on a row
+Read       the same compact list throughout;          → pick the format, Generate
+           waveform at Generate while reading;
+           level 1 = parties/address/dates,
+           level 2 = SKU line details
+Output     the file(s) on a banner, the row below
 ```
 
 **2026-10-28: the four-step bar is gone.** It drew the same journey a second
@@ -578,8 +580,15 @@ time, on top of the tabs that already describe it, and the two could disagree
 versus `Inbox / Read / Output`). The state is now just `ITAB`:
 
 - `startReading(id, index)` sets `READING`, switches to `ITAB = 2` **before** the
-  request, and renders. `readFlowPage()` is what the Read tab draws: the radar
-  while `READING` is set, the preview once `PREVIEW` is, the register otherwise.
+  request, and renders. `pendingReadRow()` merges a synthetic row into the
+  register. That row replaces only Generate with `.wave-menu`; the old radar
+  and `readFlowPage()` path are gone.
+- When extraction completes, `loadReads(true)` queues a fresh cache-register
+  read even if the initial list request was still in flight. The synthetic row
+  stays visible until the real `/api/read_list` row is ready, avoiding a flash
+  of an empty register.
+- `READOPEN` owns level 1 (Sold-To / Ship-To, address, dates, per-PO header
+  data). `READSKU` owns the nested level 2 (`SKU details` and line items).
 - `generateOrder()` writes the file(s), sets `LASTFILES`, switches to
   `ITAB = 3` and re-renders — `outBanner()` is drawn above the Output list, over
   the rows the order has just joined.
@@ -684,37 +693,25 @@ screen. `rowSnapshot()` sends `sold_to` / `ship_to` with the action and
 `_typed_ship()` does for the address. `_typed_party()` returns only the keys the
 request actually carried, so an omitted field cannot blank a stored account.
 
-### 4.3a-2 Navigating the flow, and where an override is typed (2026-10-23)
+### 4.3a-2 Navigating and inspecting a reading (2026-10-30)
 
-**Leaving a reading is Cancel, the ✕, or another tab** (2026-10-28 - the
-clickable stepper is gone, see 4.3a). Reading one PO is regularly interrupted by
-another arriving, so the way out is always one click and writes nothing:
-`cancelReading()` clears `READING` / `PREVIEW` and drops the user back on the
-register. `PREVIEW_SEQ` is bumped on every open and every back-out, so a slow
-`/api/order_preview` that lands afterwards is **dropped** instead of pushing the
-user into a preview for the order they just walked away from.
+Changing tabs does not cancel an extraction. `READING` stays in memory and the
+Read count includes its synthetic row; returning to Read shows the waveform in
+the same row until the request finishes. `PREVIEW_SEQ` still rejects a late
+answer if a newer extraction supersedes it.
 
-⚠️ Clicking another tab does NOT cancel a reading in flight - it keeps running
-and its preview is waiting when you come back to Read. Only `startReading()` on
-a different row, or Cancel, supersedes it.
+The row has two intentional disclosure levels:
 
-**The per-row Ship-To boxes are gone from the Inbox.** Name / Name 2-4, the
-street lines, postal code, city, state and the two dates are inputs **on the
-preview page**, bound to `PREVIEW.typed`:
+1. Clicking the row toggles `READOPEN[key]` and lazily fetches
+   `/api/read_detail`. This level shows the PO/account/header fields, delivery
+   address, dates, and the per-order table for a multi-PO document.
+2. The **SKU details** button inside that level toggles `READSKU[key]` and shows
+   Material, Description, Qty, Unit price and Amount. Closing SKU details does
+   not close the business/header information above it.
 
-| | |
-|---|---|
-| box value | what you typed (`PREVIEW.typed[field]`) |
-| placeholder | what the PO printed (or the computed default for R.D.D) |
-| blank box | falls back to the document - `pvShip()` deletes the key |
-| what Generate sends | `body.ship = PREVIEW.typed` (not the row) |
-
-Typing does **not** re-render: the page would be rebuilt per keystroke and the
-caret would jump. `previewPanel()` reads the current value when it next renders.
-
-The five `rowShip` / `shipFieldInput` / `shipNameCell` / `shipAddrCell` /
-`refreshShipName` functions were deleted with the cells - `of_server._typed_ship`
-still accepts the keys, which is how the preview's values reach the file.
+The Inbox still owns manual Sold-To / Ship-To selection. `rowSnapshot()` sends
+those values, plus any stored ship data, with `/api/order_preview`; Generate
+then reuses the extraction cache rather than paying for a second document read.
 
 ### 4.3b "API not connected", and what a missing token really does
 

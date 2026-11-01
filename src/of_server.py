@@ -561,6 +561,7 @@ def make_handler(db_path, master, settings):
                             st = states.get(str(idx)) or {}
                             status = st.get("status") or mail.get("status")
                             sold = str(mail.get("sold_to") or "").strip()
+                            ship = str(mail.get("ship_to") or "").strip()
                             rows.append({
                                 "id": mail.get("id"),
                                 "index": idx,
@@ -569,6 +570,7 @@ def make_handler(db_path, master, settings):
                                          .lstrip(".").lower(),
                                 "customer": mail.get("customer") or "",
                                 "sold_to": sold,
+                                "ship_to": ship,
                                 "sold_to_name": sold_names.get(sold, ""),
                                 "po_number": (summary.get("po_number")
                                               or mail.get("po_number") or ""),

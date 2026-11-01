@@ -291,10 +291,10 @@ def main_ui():
              "if (action === 'confirm') return startReading(id, index);", 1),
             ("...by switching the tab BEFORE the reading starts",
              "ITAB = 2;\n  MAILPAGE = 0;\n  render();\n  loadReads();", 1),
-            ("...and the reading panel is what that tab then shows",
-             "function readFlowPage(){", 1),
-            ("the reading step is indeterminate, not a fake percentage",
-             'class="radar"', 1),
+            ("...and the fixed Read list supplies its in-flight row",
+             "function pendingReadRow(){", 1),
+            ("the reading state is an indeterminate waveform, not a fake percentage",
+             'class="wave-menu"', 1),
             ("the Inbox has a search box beside the filters",
              'id="mailq"', 1),
             ("...which matches the fields a person searches by",
@@ -311,7 +311,7 @@ def main_ui():
             ("the preview reads before it shows anything",
              "/api/order_preview", None),
             ("...and says so while it runs",
-             "Reading the PO", 1),
+             'aria-label="Reading the PO"', 1),
             ("the format is chosen IN the preview (step 3)",
              "togglePreviewFmt(", None),
             ("completion offers the file it just wrote",
@@ -516,21 +516,31 @@ def main_ui():
         print(f"  {'ok  ' if ok else 'FAIL'} {label} "
               f"({n} of {want if want is not None else 'at least 1'})")
 
-    # ── The preview is a PAGE inside the READ tab (2026-10-23 / 10-28) ───────
-    # It used to be a dialog, and inside that dialog the address block and the
-    # format buttons sat below the fold. Two things have to stay true: it owns
-    # the whole tab while it is open, and the format choice is the FIRST thing
-    # on it.
+    # ── Read stays a list; the retained preview builder remains well ordered ─
+    # The old full-page preview is no longer called by readPanel. Its builder is
+    # retained for backwards compatibility, and if reused its format choice must
+    # still remain above its address block.
     _i_fmt = html.index('class="fmtpick"')
     _i_pv = html.index('class="pvpage"')
     _body = html[html.index("function previewPanel("):html.index("function togglePreviewFmt(")]
     for label, ok, note in (
-            ("the Read tab shows the reading, then the preview, then the list",
-             "function readFlowPage(){" in html
-             and "if (PREVIEW) return previewPanel();" in html
-             and "if (READING) return readingPanel();" in html, ""),
-            ("...and the register only when nothing is open",
-             "const page = readFlowPage();\n  if (page) return page;" in html, ""),
+            ("the Read tab keeps the compact register while extraction runs",
+             "function readPanel(){" in html
+             and "function pendingReadRow(){" in html
+             and "const page = readFlowPage();" not in html, ""),
+            ("...and swaps only Generate for the waveform",
+             "(r.reading\n        ? '<ul class=\"wave-menu\"" in html, ""),
+            ("the expanded reading has a separate nested SKU level",
+             "let READSKU = {};" in html
+             and "function toggleReadSku(event, k){" in html
+             and "if (skuOpen) h += readSkuBody(d);" in html, ""),
+            ("level one names both business account fields",
+             '<span class=\"k\">Sold-To</span>' in html
+             and '<span class=\"k\">Ship-To</span>' in html, ""),
+            ("the waveform occupies the same width as Generate",
+             ".genbtn { width:76px;" in html
+             and ".wave-menu { box-sizing:border-box;" in html
+             and "border-radius:999px; width:76px; height:30px;" in html, ""),
             ("the preview is no longer a floating dialog",
              'id="preview"' not in html and ".pvbox" not in html, ""),
             ("the format choice sits ABOVE the address block",

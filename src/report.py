@@ -670,38 +670,6 @@ PAGE = """<!DOCTYPE html>
     background:#f1f5f9; border-radius:999px; padding:0 6px; }
   .tabs .ts.on .tnum { color:#1d4ed8; background:#dbeafe; }
 
-  /* ── Reading indicator ────────────────────────────────────────────────────
-     Extraction gives no progress events - the API answers once, at the end -
-     so this must NOT claim a percentage. A radar sweep says "working" and
-     nothing more, which is honest; a 40%-filled bar would be invented. */
-  .reading { display:flex; align-items:center; gap:14px; padding:16px 18px;
-    border:1px solid var(--border); border-radius:10px; background:#fcfdfe; }
-  .radar { width:38px; height:38px; border-radius:50%; flex-shrink:0;
-    position:relative; background:
-      radial-gradient(circle, rgba(37,99,235,.10) 0%, rgba(37,99,235,.03) 70%);
-    border:1px solid #bfdbfe; }
-  .radar::before { content:""; position:absolute; inset:7px; border-radius:50%;
-    border:1px solid #dbeafe; }
-  .radar::after { content:""; position:absolute; inset:0; border-radius:50%;
-    background:conic-gradient(from 0deg, rgba(37,99,235,.55), rgba(37,99,235,0)
-      42deg, rgba(37,99,235,0) 360deg);
-    animation:spin 1.15s linear infinite; }
-  .radar i { position:absolute; top:50%; left:50%; width:4px; height:4px;
-    margin:-2px 0 0 -2px; background:var(--accent); border-radius:50%;
-    animation:blip 1.4s ease-out infinite; }
-  @keyframes spin { to { transform:rotate(360deg); } }
-  @keyframes blip { 0% { transform:scale(1); opacity:.9; }
-    70% { transform:scale(4.2); opacity:0; } 100% { opacity:0; } }
-  .reading .rtxt { min-width:0; }
-  .reading .rtitle { font-weight:600; font-size:13.5px; }
-  .dots { display:inline-flex; gap:3px; vertical-align:middle; margin-left:2px; }
-  .dots b { width:4px; height:4px; border-radius:50%; background:var(--accent);
-    animation:bounce 1s infinite; }
-  .dots b:nth-child(2) { animation-delay:.15s; }
-  .dots b:nth-child(3) { animation-delay:.3s; }
-  @keyframes bounce { 0%,80%,100% { transform:translateY(0); opacity:.4; }
-    40% { transform:translateY(-3px); opacity:1; } }
-
   /* ── Filter row additions ─────────────────────────────────────────────── */
   .searchbox { position:relative; display:inline-flex; align-items:center; }
   .searchbox input { padding:7px 28px 7px 10px; border:1px solid var(--border);
@@ -1361,6 +1329,38 @@ PAGE = """<!DOCTYPE html>
   /* Verbatim width: the label becomes "Writing…" while the file is written, and
      a button that grew would shove the switch beside it sideways. */
   .genbtn { width:76px; padding:4px 0; }
+  /* Extraction has no percentage to report. Keep the Read list fixed and put
+     this compact, indeterminate waveform exactly where Generate will appear
+     when the saved reading is ready. */
+  .wave-menu { box-sizing:border-box; border:2px solid var(--accent);
+    border-radius:999px; width:76px; height:30px; display:flex;
+    justify-content:center; align-items:center; gap:3px; padding:0 8px;
+    margin:0; background:var(--card); color:var(--accent); cursor:default;
+    overflow:hidden; }
+  .wave-menu li { list-style:none; height:18px; width:3px; flex:0 0 3px;
+    border-radius:10px; background:currentColor; margin:0; padding:0;
+    animation:wave1 .3s infinite alternate ease-in-out; }
+  .wave-menu li:nth-child(2) { animation-name:wave2; animation-delay:.2s; }
+  .wave-menu li:nth-child(3) { animation-name:wave3; animation-delay:.23s;
+    animation-duration:.4s; }
+  .wave-menu li:nth-child(4) { animation-name:wave4; animation-delay:.1s; }
+  .wave-menu li:nth-child(5) { animation-delay:.5s; }
+  .wave-menu li:nth-child(6) { animation-name:wave2; animation-duration:.5s; }
+  .wave-menu li:nth-child(8) { animation-name:wave4; animation-delay:.4s;
+    animation-duration:.25s; }
+  .wave-menu li:nth-child(9) { animation-name:wave3; animation-delay:.15s; }
+  @keyframes wave1 { from { transform:scaleY(1); }
+    to { transform:scaleY(.5); } }
+  @keyframes wave2 { from { transform:scaleY(.3); }
+    to { transform:scaleY(.6); } }
+  @keyframes wave3 { from { transform:scaleY(.6); }
+    to { transform:scaleY(.8); } }
+  @keyframes wave4 { from { transform:scaleY(.2); }
+    to { transform:scaleY(.5); } }
+  @media (prefers-reduced-motion:reduce) {
+    .wave-menu li { animation:none; transform:scaleY(.55); }
+    .wave-menu li:nth-child(2n) { transform:scaleY(.8); }
+  }
   /* The spinner is built for a light surface (dark ring, white arc); on the blue
      primary button that reads backwards, so flip it. flex:0 0 auto matters - as
      a flex item it shrank whenever the label was close to the button's width,
@@ -1401,6 +1401,19 @@ PAGE = """<!DOCTYPE html>
   .rlf .v { font-weight:600; min-width:0; word-break:break-word; }
   .rlf .v.no { font-weight:400; color:#b6c2d4; font-style:italic; }
   .rlnote { font-size:11.5px; color:var(--muted); margin:8px 0 0; }
+  .rlskuhead { width:100%; display:flex; align-items:center; gap:9px;
+    margin-top:12px; padding:8px 10px; border:1px solid var(--border);
+    border-radius:8px; background:#f8fafc; color:var(--text);
+    font-family:inherit; font-size:12.5px; font-weight:650; cursor:pointer;
+    text-align:left; }
+  .rlskuhead:hover { background:var(--accent-soft); border-color:#bfdbfe; }
+  .rlskuhead .rlsubcar { color:#94a3b8; font-size:9px;
+    transition:transform .18s ease; }
+  .rlskuhead.open .rlsubcar { transform:rotate(90deg); }
+  .rlskuhead .rlskun { margin-left:auto; color:var(--muted);
+    font-size:11.5px; font-weight:500; }
+  .rlskubody { padding:0 2px 2px 22px; }
+  .rlrow.readingrow .rlcar { opacity:.35; }
   .rlwarn { display:inline-flex; align-items:center; gap:5px; font-size:11px;
     font-weight:700; color:#92400e; background:var(--amber-soft);
     border:1px solid #fde68a; border-radius:999px; padding:1px 8px; }
@@ -2660,12 +2673,11 @@ async function generateOrder(id, index, fmts){
   if (r.message) alert(r.message);
 }
 
-// ── The reading, then the preview ────────────────────────────────
-// Shown in the READ tab, in that order: the radar while the document is being
-// read, then every per-order column it produced plus the format choice. It
-// lists only the per-order columns - the fixed constants (Sales Org 3101,
-// Division 00, USD) are the same on every line, and Material / Quantity / Unit
-// Price are reviewed line by line on the Quick Convert card afterwards.
+// ── Reading an Inbox row ───────────────────────────────────────────────────
+// The Read tab never changes shape. While the request is in flight a synthetic
+// row occupies the same list position as the saved reading will, and only the
+// Generate button is replaced by an indeterminate waveform. Once the cache is
+// ready that row becomes an ordinary, expandable Read row.
 let PREVIEW = null;   // {id, index, reading:true} then the server payload
 let PREVIEW_SEQ = 0;  // bumps on every open/close, to drop stale answers
 
@@ -2673,20 +2685,28 @@ let PREVIEW_SEQ = 0;  // bumps on every open/close, to drop stale answers
 // and the two dates are printed on the PO - a preview that skipped the reading
 // could not show the very columns it exists to confirm.
 //
-// It lands in the READ tab rather than a step of its own (2026-10-28): that tab
-// is where a reading lives, so the in-flight panel, the preview and the
-// register are three states of ONE screen instead of three screens.
-//
-// And the preview is a PAGE, not a dialog (2026-10-23). As a floating box its
-// address block and its format buttons sat below the fold on a laptop, which is
-// how a preview that HAD the address gets reported as having none.
+// It lands in the READ tab rather than a step of its own. The list shell stays
+// on screen throughout: the in-flight row becomes the saved reading in place.
 async function startReading(id, index){
-  const snap = rowSnapshot(id, index);
+  // A one-document mail is not split into a view row, so it has no att_index;
+  // its att_docs entry still carries the stored index used by /api/read_detail.
+  const candidates = expandOrders(shipRows(id));
+  const source = candidates.find(function(x){
+    const d = (x.att_docs || [])[0] || {};
+    return index === undefined || index === null
+      ? true : (x.att_index === index || d.i === index);
+  }) || candidates[0];
+  const doc = source && (source.att_docs || [])[0];
+  const readIndex = (index === undefined || index === null)
+    ? ((source && source.att_index !== undefined) ? source.att_index
+       : (doc && doc.i !== undefined ? doc.i : 0))
+    : index;
+  const snap = rowSnapshot(id, readIndex);
   const body = {id: id, format: erpFmts()};
-  if (index !== undefined && index !== null) body.index = index;
+  body.index = readIndex;
   Object.assign(body, snap);
   const seq = ++PREVIEW_SEQ;
-  READING = {id: id, index: index};
+  READING = {id: id, index: readIndex, source: source || null};
   PREVIEW = null;
   LASTFILES = null;              // a new order: the last banner is history
   // Move to the Read tab BEFORE the request: the panel it shows is the honest
@@ -2699,40 +2719,20 @@ async function startReading(id, index){
   // The user walked away (Cancel, another row, another tab) while this was in
   // flight: the answer is for a PO they are no longer looking at, so drop it.
   if (seq !== PREVIEW_SEQ) return;
-  READING = null;
   if (r.error){
+    READING = null;
     alert(r.error);
     render();               // back to the register, nothing left in flight
     return;
   }
-  // The ship block is editable HERE from now on (its per-row boxes are gone).
-  // Seed it from whatever the row still holds, so an override typed earlier -
-  // or by an older version - is not silently dropped.
-  PREVIEW = Object.assign({id: id, index: index, fmts: erpFmts(),
-                           typed: Object.assign({}, snap.ship || {})}, r);
+  // A list request may already have been in flight when extraction started and
+  // therefore contain the pre-cache answer. Force a request after it settles;
+  // until that fresh register arrives the synthetic row keeps the waveform.
+  await loadReads(true);
+  if (seq !== PREVIEW_SEQ) return;
+  READING = null;
+  PREVIEW = null;
   render();
-}
-
-// Step 2's body. An indeterminate indicator, on purpose: the API answers once,
-// at the end, and there is no progress to report. A radar sweep and a bouncing
-// dot say "working" without inventing a percentage that would sit at 30% for a
-// minute and then jump to 100.
-function readingPanel(){
-  // Everything this panel used to say under the spinner is in the head marker:
-  // while a read is running there is nothing to act on, so the paragraphs were
-  // three lines of text the user had already decided to wait for.
-  return '<div class="flowpage">'+
-    '<div class="flowhead"><h3>Reading the PO…'+faq('flowread')+'</h3></div>'+
-    '<div class="flowbody" style="padding-bottom:18px">'+
-    '<div class="reading">'+
-      '<div class="radar"><i></i></div>'+
-      '<div class="rtxt"><div class="rtitle">Extracting the order '+
-        '<span class="dots"><b></b><b></b><b></b></span></div>'+
-      '</div>'+
-    '</div>'+
-    '</div><div class="flowfoot">'+
-      '<button class="btn" onclick="cancelReading()">Cancel</button>'+
-    '</div></div>';
 }
 
 // What the file will contain, and which file(s) to write.
@@ -3294,22 +3294,15 @@ const PER_PAGE = 12;  // rows per page - one screenful without scrolling
 // twice - once as tabs, once as steps - and the two could disagree. The tabs
 // ARE the pipeline now:
 //
-//   Extract on an Inbox row → the READ tab opens with that PO being read, and
-//                             the output format is chosen on the page after it
+//   Extract on an Inbox row → the READ tab opens with that PO as a list row;
+//                             its Generate spot shows the reading waveform
 //   Generate                → the OUTPUT tab opens with the file(s) on top
 //
-// READING is the in-flight state (the radar panel); PREVIEW is the answer from
-// /api/order_preview. Both are drawn by readPanel(), so a reading can never be
-// somewhere other than the tab that owns it.
+// READING is the in-flight row. The old full-page radar/preview path is no
+// longer part of this screen: keeping the list stable is what lets an operator
+// compare several readings without losing their place.
 let READING = null;    // {id, index} while the reading request is in flight
 let LASTFILES = null;  // {files:[{fmt, name, url}]} - what the last write made
-
-// What the Read tab shows instead of the register, or '' when nothing is open.
-function readFlowPage(){
-  if (PREVIEW) return previewPanel();
-  if (READING) return readingPanel();
-  return '';
-}
 
 // Leave the open reading/preview and go back to the register. Bumping the
 // sequence counter too: a slow /api/order_preview that lands afterwards must be
@@ -3404,9 +3397,11 @@ function toggleSort(){ SORTASC = !SORTASC; render(); }
 let ITAB = 1;
 let READROWS = null;    // the register from /api/read_list, or null if not loaded
 let READLOAD = false;   // a request is in flight
+let READPROMISE = null; // lets a post-extraction refresh queue behind a list load
 let READERR = '';       // why the register could not be fetched, if it could not
 let READQ = '';         // free-text filter on the read list
 let READOPEN = {};      // which rows are expanded
+let READSKU = {};       // second-level disclosure inside an expanded Read row
 let READDETAIL = {};    // id/index -> the reading, once fetched
 let READT = null;
 
@@ -3419,7 +3414,7 @@ function inboxTabs(){
   const day = dayOrders();
   const n1 = day.filter(m => m.status !== 'Done').length;
   const n3 = day.filter(m => m.status === 'Done').length;
-  const n2 = READROWS ? READROWS.filter(r => !r.done).length : null;
+  const n2 = (READROWS || READING) ? readListRows().length : null;
   const items = [[1, 'Inbox', n1], [2, 'Read', n2], [3, 'Output', n3]];
   return '<div class="tabs" id="itabs" style="--i:'+(ITAB-1)+'">'+
     '<span class="tsink"></span>'+
@@ -3478,9 +3473,8 @@ function datePick(){
 }
 
 function renderToday(){
-  // Three tabs, one pipeline. The Read tab may be showing a reading or a
-  // preview instead of the register - that choice lives in readPanel(), so the
-  // tab bar on top always describes what is under it.
+  // Three tabs, one pipeline. Read is always the same compact register, even
+  // while one of its rows is being extracted.
   if (ITAB === 2) return inboxTabs() + readPanel();
   if (ITAB === 3)
     return inboxTabs() + (LASTFILES ? outBanner() : '') +
@@ -3666,10 +3660,16 @@ function inboxList(){
 // has to interpolate a string into an attribute (which is how a quote in a file
 // name becomes a syntax error inside PAGE, a Python string with its own idea of
 // escaping).
-function loadReads(){
-  if (READLOAD) return;
+function loadReads(force){
+  if (READLOAD){
+    // Extraction may finish while the initial list request is still returning
+    // the pre-extraction cache. Queue one genuinely fresh request behind it.
+    return force
+      ? READPROMISE.then(function(){ return loadReads(false); })
+      : READPROMISE;
+  }
   READLOAD = true;
-  api('/api/read_list').then(function(r){
+  READPROMISE = api('/api/read_list').then(function(r){
     READLOAD = false;
     READERR = (r && r.error) || '';
     READROWS = (r && r.rows) || [];
@@ -3681,10 +3681,40 @@ function loadReads(){
     if (READROWS === null) READROWS = [];
     if (TAB === 'today' && ITAB === 2) render();
   });
+  return READPROMISE;
+}
+
+function pendingReadRow(){
+  if (!READING) return null;
+  const m = READING.source || {};
+  const d = (m.att_docs || [])[0] || {};
+  const name = d.name || ((m.pdf_paths || [])[0] || '').split(/[\\/]/).pop()
+    || 'Reading order document';
+  const dot = name.lastIndexOf('.');
+  return {
+    id: READING.id, index: READING.index, name: name,
+    ext: dot >= 0 ? name.slice(dot + 1) : 'pdf',
+    customer: m.customer || '', sold_to: m.sold_to || '',
+    ship_to: m.ship_to || '',
+    sold_to_name: m.sold_to_name || '', po_number: m.po_number || '',
+    po_count: 1, po_numbers: [], read_at: '', lines: 0, review: 0,
+    done: false, reading: true
+  };
+}
+
+// The in-flight reading wins over a stale cached row with the same key. This
+// matters when re-reading an existing PO: the old Generate button must not stay
+// actionable while its replacement is being extracted.
+function readListRows(){
+  const rows = (READROWS || []).filter(r => !r.done);
+  const pending = pendingReadRow();
+  if (!pending) return rows;
+  const k = pending.id + ':' + pending.index;
+  return [pending].concat(rows.filter(r => r.id + ':' + r.index !== k));
 }
 
 function readCountText(){
-  const rows = (READROWS || []).filter(r => !r.done);
+  const rows = readListRows();
   const q = (READQ || '').trim();
   return q ? rows.filter(readMatch).length + ' of ' + rows.length
            : rows.length + ' read';
@@ -3693,14 +3723,18 @@ function readCountText(){
 function readMatch(r){
   const q = (READQ || '').trim().toLowerCase();
   if (!q) return true;
-  return [r.name, r.customer, r.po_number, r.sold_to, r.sold_to_name,
+  return [r.name, r.customer, r.po_number, (r.po_numbers || []).join(' '),
+          r.sold_to, r.ship_to, r.sold_to_name,
           r.ext].join(' ').toLowerCase().indexOf(q) >= 0;
 }
 
 function readRowsHTML(){
-  const rows = (READROWS || []).filter(r => !r.done).filter(readMatch);
+  const all = readListRows();
+  const rows = all.filter(readMatch);
   if (!rows.length){
-    if ((READROWS || []).length)
+    if (READROWS === null && READLOAD)
+      return '<div class="cardnote">Loading the read register…</div>';
+    if (all.length)
       return '<div class="cardnote">No read document matches that search.</div>';
     return '<div class="empty" style="margin:16px 18px">Nothing has been '+
       'read yet. Press <b>Extract</b> on an Inbox row - the reading is kept on '+
@@ -3711,13 +3745,14 @@ function readRowsHTML(){
 
 function readRowHTML(r){
   const k = r.id + ':' + r.index;
-  const open = !!READOPEN[k];
+  const open = !r.reading && !!READOPEN[k];
   const ext = String(r.ext || 'pdf').toLowerCase();
   const cls = ext === 'pdf' ? 'pdf'
             : (ext === 'xlsx' || ext === 'xls' ? 'xls' : '');
   const who = r.sold_to_name || r.sold_to || '';
-  return '<div class="rlrow'+(open ? ' open' : '')+'" data-key="'+k+'">'+
-    '<div class="rlmain" onclick="toggleRead(this)">'+
+  return '<div class="rlrow'+(open ? ' open' : '')+
+      (r.reading ? ' readingrow' : '')+'" data-key="'+k+'">'+
+    '<div class="rlmain"'+(r.reading ? '' : ' onclick="toggleRead(this)"')+'>'+
       '<span class="rlcar">&#9654;</span>'+
       '<div style="min-width:0">'+
         '<div class="rlfname" title="'+esc(r.name)+'">'+esc(r.name)+'</div>'+
@@ -3736,11 +3771,16 @@ function readRowHTML(r){
         '</div>'+
       '<div class="rlcell">'+fmtDT(r.read_at)+'</div>'+
       '<div class="rlacts">'+fmtSeg('fmt-'+k)+
-      '<button class="btn sm primary genbtn" '+
-        'title="Write the Order Upload in the version(s) chosen beside it: '+
-        'one file per ticked version" '+
-        'onclick="event.stopPropagation();readOutput(this)">Generate'+
-      '</button></div>'+
+      (r.reading
+        ? '<ul class="wave-menu" role="status" aria-label="Reading the PO" '+
+            'title="Reading the PO…">'+
+            '<li></li><li></li><li></li><li></li><li></li><li></li>'+
+            '<li></li><li></li><li></li></ul>'
+        : '<button class="btn sm primary genbtn" '+
+            'title="Write the Order Upload in the version(s) chosen beside it: '+
+            'one file per ticked version" '+
+            'onclick="event.stopPropagation();readOutput(this)">Generate'+
+          '</button>')+'</div>'+
     '</div>'+
     (open ? '<div class="rldetail" data-detail="'+k+'">'+
       readDetailBody(k)+'</div>' : '')+
@@ -3772,37 +3812,8 @@ function orderTable(ords){
   return h + '</table>';
 }
 
-function readDetailBody(k){
-  const d = READDETAIL[k];
-  if (!d || d === 'loading')
-    return '<div class="rlnote"><span class="spin" style="border-color:#cbd5e1;'+
-      'border-top-color:#64748b;margin-right:6px;vertical-align:middle"></span>'+
-      'Reading the saved result…</div>';
-  if (d.error)
-    return '<div class="rlnote" style="color:var(--danger)">'+esc(d.error)+
-      '</div>';
-  let h = '';
-  // A reading taken before the address block was captured has no header keys at
-  // all. Saying "not printed" about those would blame the PO for something the
-  // old reader never looked for.
-  if (d.legacy)
-    h += '<div class="rlnote" style="margin:0 0 8px;color:#92400e">'+
-      'This reading predates the address capture (before 2026-10-22), so it '+
-      'has no delivery address, PO date or RDD. Confirm the PO again to re-read '+
-      'it - the lines below are still valid.</div>';
-  const ords = d.orders || [];
-  if (ords.length > 1) h += orderTable(ords);
-  if ((d.fields || []).length) h += '<div class="rlgrid">';
-  for (const f of (d.fields || [])){
-    // The timestamp is the only machine value in here; the rest are strings
-    // lifted off the document and must be shown exactly as printed.
-    const val = (f[0] === 'Read at' && f[1]) ? fmtDT(f[1])
-              : (f[1] ? String(f[1]) : '');
-    h += '<div class="rlf"><span class="k">'+esc(f[0])+'</span>'+
-      '<span class="v'+(val ? '' : ' no')+'">'+
-      (val ? esc(val) : 'not printed')+'</span></div>';
-  }
-  if ((d.fields || []).length) h += '</div>';
+function readSkuBody(d){
+  let h = '<div class="rlskubody">';
   if ((d.records || []).length){
     h += '<table style="margin-top:10px"><tr><th>Material</th>'+
       '<th>Description</th><th class="num">Qty</th>'+
@@ -3821,7 +3832,68 @@ function readDetailBody(k){
   } else {
     h += '<div class="rlnote">No line items were read from this document.</div>';
   }
+  return h + '</div>';
+}
+
+function readDetailBody(k){
+  const d = READDETAIL[k];
+  if (!d || d === 'loading')
+    return '<div class="rlnote"><span class="spin" style="border-color:#cbd5e1;'+
+      'border-top-color:#64748b;margin-right:6px;vertical-align:middle"></span>'+
+      'Reading the saved result…</div>';
+  if (d.error)
+    return '<div class="rlnote" style="color:var(--danger)">'+esc(d.error)+
+      '</div>';
+  let h = '';
+  // A reading taken before the address block was captured has no header keys at
+  // all. Saying "not printed" about those would blame the PO for something the
+  // old reader never looked for.
+  if (d.legacy)
+    h += '<div class="rlnote" style="margin:0 0 8px;color:#92400e">'+
+      'This reading predates the address capture (before 2026-10-22), so it '+
+      'has no delivery address, PO date or RDD. Confirm the PO again to re-read '+
+      'it - the lines below are still valid.</div>';
+  // Sold-To and Ship-To live on the mail/master row, not inside the extraction
+  // cache. Put them at the top of level 1 so the business identity is visible
+  // beside the document-derived name, address and dates.
+  const party = readListRows().find(r => r.id + ':' + r.index === k) || {};
+  h += '<div class="rlgrid">'+
+    '<div class="rlf"><span class="k">Sold-To</span>'+
+      '<span class="v'+(party.sold_to ? '' : ' no')+'">'+
+      (party.sold_to ? esc(party.sold_to) : 'not selected')+'</span></div>'+
+    '<div class="rlf"><span class="k">Ship-To</span>'+
+      '<span class="v'+(party.ship_to ? '' : ' no')+'">'+
+      (party.ship_to ? esc(party.ship_to) : 'not selected')+'</span></div>'+
+    '</div>';
+  const ords = d.orders || [];
+  if (ords.length > 1) h += orderTable(ords);
+  if ((d.fields || []).length) h += '<div class="rlgrid">';
+  for (const f of (d.fields || [])){
+    // The timestamp is the only machine value in here; the rest are strings
+    // lifted off the document and must be shown exactly as printed.
+    const val = (f[0] === 'Read at' && f[1]) ? fmtDT(f[1])
+              : (f[1] ? String(f[1]) : '');
+    h += '<div class="rlf"><span class="k">'+esc(f[0])+'</span>'+
+      '<span class="v'+(val ? '' : ' no')+'">'+
+      (val ? esc(val) : 'not printed')+'</span></div>';
+  }
+  if ((d.fields || []).length) h += '</div>';
+  const skuOpen = !!READSKU[k];
+  const skuCount = (d.records || []).length + (+d.more || 0);
+  h += '<button type="button" class="rlskuhead'+(skuOpen ? ' open' : '')+'" '+
+    'onclick="toggleReadSku(event,\\''+k+'\\')" aria-expanded="'+skuOpen+'">'+
+    '<span class="rlsubcar">&#9654;</span><span>SKU details</span>'+
+    '<span class="rlskun">'+skuCount+' line'+(skuCount === 1 ? '' : 's')+
+    '</span></button>';
+  if (skuOpen) h += readSkuBody(d);
   return h;
+}
+
+function toggleReadSku(event, k){
+  if (event) event.stopPropagation();
+  READSKU[k] = !READSKU[k];
+  const el = document.querySelector('[data-detail="'+k+'"]');
+  if (el) el.innerHTML = readDetailBody(k);
 }
 
 function loadReadDetail(k){
@@ -3885,16 +3957,9 @@ function setReadQ(v){
 }
 
 function readPanel(){
-  // A reading in flight, or its preview, IS the Read tab for that moment: both
-  // belong to the same PO and to the same question ("what did the document
-  // say, and which file do I want out of it?"). Cancel brings the register
-  // back - nothing is written and the row is untouched until Generate.
-  const page = readFlowPage();
-  if (page) return page;
-  if (READROWS === null){
-    if (!READLOAD) loadReads();
-    return '<div class="empty">Loading the read register…</div>';
-  }
+  // This shell is permanent: initial load, extraction and saved results all
+  // use the same compact list shown in the reference design.
+  if (READROWS === null && !READLOAD) loadReads();
   const warn = READERR
     ? '<div class="cardnote" style="background:#fffbeb;border:1px solid '+
       '#fde68a;border-radius:var(--radius);margin-bottom:14px;color:#92400e">'+
@@ -6737,10 +6802,12 @@ const FAQ = {
     'A wrong call can be undone with <b>Rescue</b>.',
   read: 'A reading is kept on disk the moment a PO is read, so this list is '+
     'the extraction cache - opening it buys nothing from the API. Open a row '+
-    'for the delivery address, the RDD and the lines that were read; '+
+    'first for Sold-To, Ship-To, delivery address and dates, then open its '+
+    '<b>SKU details</b> section for the lines that were read. While Extract is '+
+    'running, the Generate position shows a blue waveform without replacing '+
+    'the list. '+
     '<b>Full</b> / <b>Simple</b> at its right end writes the file from that '+
-    'cached reading, not from a new one. An <b>Extract</b> from the Inbox '+
-    'opens here too: first the reading, then what it produced.',
+    'cached reading, not from a new one.',
   output: 'Confirmed POs for the day, oldest first. Download the Order '+
     'Upload file, key it into ERP, then <b>Mark uploaded</b>. <b>Undo</b> '+
     'puts one back for reprocessing.',
