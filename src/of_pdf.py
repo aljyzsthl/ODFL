@@ -1176,7 +1176,12 @@ def parse_excel_sheet(path, settings, mm, sheet=None):
     None is the normal answer for the reference sheets that travel with a PO
     workbook; the caller skips them rather than reporting a failure.
     """
-    rows = material_master._read_rows(path, sheet)
+    # A saved Excel filter is part of what the sender submitted. Reading the
+    # raw cell grid ignores RowDimension.hidden and effectively clears that
+    # filter, turning a small order into the customer's whole catalogue. PO
+    # extraction therefore consumes only rows visible in the saved workbook;
+    # Material Code imports continue to use the all-rows default.
+    rows = material_master._read_rows(path, sheet, visible_only=True)
     if not rows:
         return None
     cols, start, strict = _header_row(rows)

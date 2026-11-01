@@ -348,12 +348,15 @@ def parse_section(text):
     return parts[0], parts[1], parts[2]
 
 
-def _rows_via_excel(path, sheet=None):
+def _rows_via_excel(path, sheet=None, visible_only=False):
     """Read a sheet through the installed Excel.
 
     Files protected by NASCA DRM cannot be opened directly by Python, but Excel
     is an authorized program and can. Only values are read and the file is not
-    saved, so the DRM state is preserved.
+    saved, so the DRM state is preserved. ``visible_only`` is used by the PO
+    reader: filtered or manually hidden rows are not part of the order as the
+    sender saved it. Material-master imports leave it false and still read the
+    complete workbook.
     """
     import pythoncom
     import win32com.client
@@ -378,9 +381,32 @@ def _rows_via_excel(path, sheet=None):
         if vals is None:
             return []
         if not isinstance(vals, tuple):
+            if visible_only and bool(used.EntireRow.Hidden):
+                return []
             return [[vals]]
+        visible_rows = None
+        if visible_only:
+            # xlCellTypeVisible = 12. One SpecialCells call is materially
+            # faster than asking COM for EntireRow.Hidden up to 20,000 times.
+            # Areas can be split by hidden columns as well as hidden rows, so
+            # collect row offsets into a set before walking the values.
+            visible_rows = set()
+            try:
+                cells = used.SpecialCells(12)
+                first = int(used.Row)
+                for area in cells.Areas:
+                    start = int(area.Row) - first
+                    count = int(area.Rows.Count)
+                    visible_rows.update(range(start, start + count))
+            except Exception:
+                # If Excel reports no visible cells, the saved view contains
+                # no rows for the PO reader. Do not silently fall back to all
+                # rows, which would recreate the filter-removal bug.
+                visible_rows = set()
         rows = []
-        for r in vals[:20000]:
+        for idx, r in enumerate(vals[:20000]):
+            if visible_rows is not None and idx not in visible_rows:
+                continue
             rows.append(list(r) if isinstance(r, tuple) else [r])
         return rows
     finally:
@@ -397,11 +423,14 @@ def _rows_via_excel(path, sheet=None):
         pythoncom.CoUninitialize()
 
 
-def _read_rows(path, sheet=None):
+def _read_rows(path, sheet=None, visible_only=False):
     """Read rows from a price list file.
 
     Normally read with openpyxl, but DRM-protected or legacy .xls files
-    are read through the installed Excel.
+    are read through the installed Excel. The optional visible-only mode is
+    deliberately opt-in: purchase orders must respect the sender's saved
+    filter/hidden-row state, while a Material Code upload must still import the
+    complete source list.
     """
     with open(path, "rb") as f:
         head = f.read(8)
@@ -409,11 +438,16 @@ def _read_rows(path, sheet=None):
 
     if head[:2] == b"PK":                       # regular .xlsx / .xlsm
         import openpyxl
-        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+        # Read-only worksheets do not expose reliable RowDimension.hidden
+        # state. Use a normal, still non-writing load only for PO visible-mode.
+        wb = openpyxl.load_workbook(path, data_only=True,
+                                    read_only=not visible_only)
         try:
             ws = wb[sheet] if sheet and sheet in wb.sheetnames else wb.active
-            return [list(r) for r in ws.iter_rows(max_row=20000,
-                                                  values_only=True)]
+            return [list(r) for row_no, r in enumerate(
+                        ws.iter_rows(max_row=20000, values_only=True), 1)
+                    if not (visible_only
+                            and ws.row_dimensions[row_no].hidden)]
         finally:
             wb.close()
 
@@ -422,7 +456,7 @@ def _read_rows(path, sheet=None):
     ole = head[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
     if drm or ole:
         try:
-            rows = _rows_via_excel(path, sheet)
+            rows = _rows_via_excel(path, sheet, visible_only=visible_only)
         except Exception as e:
             kind = ("protected by NASCA DRM" if drm
                     else "in the old Excel 97-2003 format")

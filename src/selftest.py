@@ -1103,6 +1103,28 @@ def run_excel():
         check("blank rows: 0.00 template rows not read as items",
               got == ["RF23A9671SR"], f"got {got}")
 
+        # 3b - the sender saved this PO with an Excel filter applied. Filtered
+        # rows remain in the XML with RowDimension.hidden=True; iter_rows()
+        # alone sees them and used to turn a one-line order into the entire
+        # underlying catalogue. The saved visible view is the submitted PO.
+        filtered = build("filtered", fx_basic())
+        import openpyxl
+        fwb = openpyxl.load_workbook(filtered)
+        fws = fwb.active
+        fws.auto_filter.ref = "A1:E3"
+        fws.auto_filter.add_filter_column(0, ["RF23A9671SR"])
+        fws.row_dimensions[3].hidden = True
+        fwb.save(filtered)
+        fwb.close()
+        res = read_pos(filtered, settings)
+        got = codes_of(res[0]) if res else []
+        check("saved Excel filter: hidden rows are not read as order lines",
+              got == ["RF23A9671SR"], f"got {got}")
+        all_rows = quick_convert.material_master._read_rows(filtered)
+        check("saved Excel filter: master imports still see the full sheet",
+              any("WF45T6000AW" in row for row in all_rows),
+              "the all-rows reader was changed globally")
+
         # 4 - a price list must not become an order
         try:
             res = read_pos(build("prices", fx_price_list()), settings)
