@@ -3766,6 +3766,9 @@ def run_extract():
     for code in ("RF22A4111SR", "NE63D6511SR", "DW80CG4021SR"):
         check(f"{code} is confirmed by the list", bb.lookup(code)[0] == code,
               f"got {bb.lookup(code)}")
+    for code in ("L-INST/E3-DW", "L-INST/E5-MWO", "L-INST/E5-RANE"):
+        check(f"service SKU {code} is confirmed by the list",
+              bb.lookup(code)[0] == code, f"got {bb.lookup(code)}")
 
     def rec(code, qty="1", price="100.00", amount="100.00"):
         return {"material_code": code, "backbone_code": "", "description": "",
@@ -3823,6 +3826,39 @@ def run_extract():
     check("a line with no printed code is flagged, never guessed",
           all(r.get("needs_review") for r in kept)
           and any("no material code" in r["reason"] for r in review))
+
+    # The model read these KB Home work-order rows in full but left the code
+    # field blank because it interpreted "install" as a non-product service.
+    # An explicit L-INST token on the SAME row can be recovered only when the
+    # complete token is independently present in the Material Code master.
+    install = rec("")
+    install["source_line"] = (
+        "DSW- L-INST/E3-DW, Samsung, Dishwasher install with required "
+        "accessories included | 1.00 | EA | 80.00")
+    kept, review = claude_engine.apply_gate([install], bb, "t.pdf", "1")
+    check("a listed L-INST service SKU is recovered from its returned row",
+          len(kept) == 1
+          and kept[0]["material_code"] == "L-INST/E3-DW"
+          and kept[0]["backbone_code"] == "L-INST/E3-DW"
+          and kept[0]["match_type"] == "source_line_exact"
+          and not kept[0].get("needs_review") and not review,
+          f"kept={kept} review={review}")
+    mentioned = rec("")
+    mentioned["source_line"] = "Notes include RF22A4111SR; no ordered SKU"
+    kept, review = claude_engine.apply_gate([mentioned], bb, "t.pdf", "1")
+    check("source-line recovery is limited to listed L-INST service SKUs",
+          kept[0]["material_code"] == "" and kept[0].get("needs_review")
+          and bool(review), f"kept={kept} review={review}")
+
+    prompt = claude_engine._SYSTEM
+    material_help = claude_engine._ORDER_SCHEMA["properties"]["lines"][
+        "items"]["properties"]["material_code"]["description"]
+    check("the prompt treats coded installation rows as ordered lines",
+          "NEVER skip a coded installation" in prompt
+          and "SERVICE SKU" in prompt)
+    check("the prompt preserves L-INST instead of stripping it as a prefix",
+          "L-INST is a real service-SKU prefix" in prompt
+          and "L-INST/E3-DW" in material_help)
 
     # ---- the listed spelling wins -----------------------------------------
     kept, _ = claude_engine.apply_gate([rec("DVE45T6000W")], bb, "t.pdf", "1")

@@ -402,10 +402,16 @@ _ORDER_SCHEMA = {
                 "properties": {
                     "material_code": {
                         "type": "string",
-                        "description": "The product model / SKU only. If an "
-                                       "ITEM ID prefixes the model with store "
-                                       "segments, omit those segments: printed "
-                                       "51E-863-RT16A6195SR means "
+                        "description": "The ordered line's material code / SKU "
+                                       "only. This includes product, installation, "
+                                       "delivery, recycling and other service SKUs. "
+                                       "Preserve a complete L-INST code: printed "
+                                       "'DSW- L-INST/E3-DW, Samsung, Dishwasher "
+                                       "install' means L-INST/E3-DW; DSW- is a "
+                                       "category prefix but L-INST is part of the "
+                                       "SKU. If an ITEM ID prefixes a product model "
+                                       "with store segments, omit those segments: "
+                                       "printed 51E-863-RT16A6195SR means "
                                        "RT16A6195SR."},
                     "description": {"type": "string"},
                     "quantity": {"type": "string"},
@@ -457,17 +463,17 @@ Follow these rules exactly.
 
 2. A line item belongs to the order whose header (the P/O number block) is the nearest one ABOVE it. A page with a different explicit P/O number ALWAYS starts a new order, even when its buyer, ship-to address, products, layout, prices or dates look almost identical to another page. When a page continues the previous page's table and prints no new order number, its lines belong to the order above it - usually the one on the previous page. When a page prints a NEW order number, every line below that header belongs to the new order.
 
-3. Inside each order, return one object per ORDERED LINE ITEM - one row of that order's items table that names a product ordered and carries its own quantity. Do not deduplicate across orders: if two different PO numbers order the same product with the same quantity and price, that line must appear once in EACH order.
+3. Inside each order, return one object per ORDERED LINE ITEM - one row of that order's items table that names a product, installation, delivery, recycling or other service/add-on ordered and carries its own quantity. An installation or service row with its own SKU, quantity and/or price is an ordered line even though it is not a physical appliance. Do not deduplicate across orders: if two different PO numbers order the same product or service with the same quantity and price, that line must appear once in EACH order.
 
 4. Copy every value EXACTLY AS PRINTED. Never recalculate, round, convert, reformat or "fix" a number. Write digits with the decimal point as printed and no currency symbol and no thousands separator: printed "1,234.50" is returned as "1234.50" (removing the $ and the comma is not a change of value; changing the digits is).
 
 5. NEVER INVENT A VALUE. If a quantity, unit price or amount is not printed for a line, return an empty string for that field. An empty field is a success - it is flagged for a human. A plausible number you constructed is a failure, because it cannot be told from a real one.
 
-6. SKIP rows that are not ordered items: subtotal, total, tax, freight, shipping, handling, discount, grand total, and any other summary row. The grand total of an order still belongs in that order's `document_total` - it is just not a line.
+6. SKIP rows that are not ordered items: subtotal, total, tax, generic freight/shipping/handling without an ordered SKU, discount, grand total, and any other summary row. The grand total of an order still belongs in that order's `document_total` - it is just not a line. NEVER skip a coded installation, delivery, recycling or other service/add-on row merely because its description says "install", "installation" or "service"; when it has its own material code and quantity and/or price, return it as a line item.
 
 7. SKIP a model number that appears only inside ANOTHER item's description or notes ("...includes RF28R7201SR..."). A model named in prose is not an order line.
 
-8. material_code: the product model / SKU identifier, with no description words and no store/category/vendor prefix. Some ITEM ID values join a store prefix to the actual Samsung model. For example, printed ITEM ID "51E-863-RT16A6195SR" means material_code "RT16A6195SR"; "51H-863-RS27T5200SG" means "RS27T5200SG". Keep the complete printed row in source_line, but do not put the "51E-863-" or "51H-863-" prefix in material_code.
+8. material_code: the ordered line's product OR SERVICE SKU identifier, with no description words and no store/category/vendor prefix. L-INST is a real service-SKU prefix, NOT a category/vendor prefix: preserve the complete printed token including every hyphen, slash and suffix. For example, "DSW- L-INST/E3-DW, Samsung, Dishwasher install" means material_code "L-INST/E3-DW"; "MCR- L-INST/E5-MWO" means "L-INST/E5-MWO"; and "RNG- L-INST/E5-RANE" means "L-INST/E5-RANE". Here DSW-, MCR- and RNG- are category prefixes to omit, while L-INST remains part of the code. Some ITEM ID values instead join a store prefix to the actual Samsung product model. For example, printed ITEM ID "51E-863-RT16A6195SR" means material_code "RT16A6195SR"; "51H-863-RS27T5200SG" means "RS27T5200SG". Keep the complete printed row in source_line, but do not put the "51E-863-" or "51H-863-" prefix in material_code.
 
 9. quantity: the number of units ordered. unit_price: the price of ONE unit. amount: the line's extended total. If the document prints only ONE money figure for a line, put it in unit_price and leave amount empty - do not multiply it yourself.
 
@@ -818,6 +824,26 @@ def apply_gate(records: list, backbone: BackboneIndex,
     kept, review = [], []
     for r in records:
         raw = str(r.get("material_code") or "").strip()
+        recovered_from_source = False
+        if not raw and backbone.enabled:
+            # A vision model can read a service row and all of its values
+            # correctly, yet leave material_code empty because the description
+            # says "install" rather than naming a physical product. Recover only
+            # an explicit L-INST token from that SAME returned row, and only
+            # when the complete token independently exists in the Material
+            # Code master.  This is recognition, not inference: descriptions
+            # mentioning an appliance model still remain blank and reviewable.
+            source = str(r.get("source_line") or "")
+            for token in re.findall(
+                    r"(?i)(?<![A-Z0-9])L-INST(?:[/_-][A-Z0-9_\-]+)+",
+                    source):
+                listed, _kind = backbone.lookup(token)
+                if listed and re.sub(r"[^A-Z0-9]", "", listed.upper()).startswith(
+                        "LINST"):
+                    raw = token
+                    r["material_code"] = token
+                    recovered_from_source = True
+                    break
         if not raw:
             r["needs_review"] = True
             r["match_type"] = "unconfirmed"
@@ -866,7 +892,8 @@ def apply_gate(records: list, backbone: BackboneIndex,
                            "po_number": po_number})
             continue
         r["backbone_code"] = code
-        r["match_type"] = kind
+        r["match_type"] = ("source_line_" + kind
+                           if recovered_from_source else kind)
         r["material_code"] = backbone.printed_form(code, matched_input)
         kept.append(r)
     return kept, review
