@@ -1851,13 +1851,20 @@ def preview_order(paths, settings, mail, typed_ship=None, sold_to="",
 # labels say "not printed" when the document carried nothing, which is a fact
 # about the PO, not an error - a blank address is sometimes correct.
 _READ_FIELDS = (
+    ("P/O No.", "po_number"),
+    ("Printed total", "document_total"),
     ("PO date", "po_date"),
     ("RDD", "rdd"),
     ("RDD source", "rdd_source"),
     ("Ship-To name", "ship_to_name"),
+    ("Ship-To name 2", "ship_to_name2"),
+    ("Ship-To name 3", "ship_to_name3"),
+    ("Ship-To name 4", "ship_to_name4"),
     ("Address", "ship_to_address"),
     ("Street 2", "ship_to_street2"),
     ("Street 3", "ship_to_street3"),
+    ("Street 4", "ship_to_street4"),
+    ("Street 5", "ship_to_street5"),
     ("City", "ship_to_city"),
     ("State", "ship_to_region"),
     ("ZIP", "ship_to_zip"),
@@ -1886,19 +1893,14 @@ def _cache_orders(d):
     """
     blocks = d.get("orders") or []
     if not blocks:
-        blocks = [{"po_number": d.get("po_number") or "",
-                   "po_date": d.get("po_date") or "",
-                   "rdd": d.get("rdd") or "",
-                   "rdd_defaulted": d.get("rdd_defaulted"),
-                   "document_total": d.get("document_total") or "",
-                   "ship_to_address": d.get("ship_to_address") or "",
-                   "ship_to_city": d.get("ship_to_city") or "",
-                   "ship_to_zip": d.get("ship_to_zip") or ""}]
+        blocks = [{key: d.get(key) or "" for _label, key in _READ_FIELDS}]
+        blocks[0]["rdd_defaulted"] = d.get("rdd_defaulted")
     recs = d.get("records") or []
     out = []
     for b in blocks:
         idx = b.get("index")
-        out.append({
+        row = {
+            "index": idx if idx is not None else len(out),
             "po": _read_str(b.get("po_number")),
             "po_date": _read_str(b.get("po_date")),
             "rdd": _read_str(b.get("rdd")),
@@ -1910,7 +1912,12 @@ def _cache_orders(d):
             "lines": (sum(1 for r in recs if r.get("order_index") == idx)
                       if idx is not None else
                       int(b.get("line_count") or len(recs))),
-        })
+        }
+        # Keep the compact compatibility names above for the existing list,
+        # and expose every editable header key for the override editor.
+        for _label, key in _READ_FIELDS:
+            row[key] = _read_str(b.get(key))
+        out.append(row)
     return out
 
 
@@ -1940,12 +1947,11 @@ def read_summary(settings, path):
     }
 
 
-def read_detail(settings, path, limit=40):
+def read_detail(settings, path, limit=None):
     """What the reading actually took off the page, for one expanded row.
 
-    Capped at `limit` lines: this is a preview of a reading that already exists,
-    not a second copy of the file, and the operator can open the Order Upload
-    for the full list.
+    All lines are returned by default. The Read panel is now an editor, not a
+    visual sample: hiding line 41 would make it impossible to override it.
     """
     d = cached_read(settings, path)
     if not d:
@@ -1958,24 +1964,28 @@ def read_detail(settings, path, limit=40):
     # field grid would then say "not printed" about four dates that ARE
     # printed, so the panel shows the order list instead (see `orders` below).
     fields = ([] if multi else
-              [[label, _read_str(d.get(key))] for label, key in _READ_FIELDS])
-    fields.append(["Read at", _read_str(d.get("processed_at"))])
-    fields.append(["Source file", _read_str(d.get("source_file"))])
+              [[label, _read_str(d.get(key)), key]
+               for label, key in _READ_FIELDS])
+    fields.append(["Read at", _read_str(d.get("processed_at")), ""])
+    fields.append(["Source file", _read_str(d.get("source_file")), ""])
     recs = d.get("records") or []
     rows = [{
+        "index": i,
+        "order_index": r.get("order_index"),
         "code": _read_str(r.get("material_code")),
         "desc": _read_str(r.get("description")),
         "qty": _read_str(r.get("quantity")),
         "price": _read_str(r.get("unit_price")),
         "amount": _read_str(r.get("amount")),
         "review": bool(r.get("needs_review")),
-    } for r in recs[:limit]]
+    } for i, r in enumerate(recs if limit is None else recs[:limit])]
+    shown = len(rows)
     return {
         "fields": fields,
         # The orders this document held, when it held more than one.
         "orders": orders if multi else [],
         "records": rows,
-        "more": max(0, len(recs) - limit),
+        "more": max(0, len(recs) - shown),
         "page_count": d.get("page_count") or 0,
         # Readings taken before 2026-10-22 came from the retired local engine,
         # which never captured the header block. Their address fields are not
@@ -2167,6 +2177,13 @@ def read_orders(paths, settings, force=True):
                 except Exception as e:
                     msgs.append(f"{name}: FAILED - {e}")
 
+    # Stable positions connect the Read editor to this fresh copy of the saved
+    # reading. `expand_orders()` may split one result into several, but each
+    # record keeps this original position.
+    for result in results:
+        for read_index, rec in enumerate(result.get("records") or []):
+            rec["_read_index"] = read_index
+
     # Cross-check against the Material Code master (ERP operates on the master's notation)
     fixed, unknown, err = normalise_to_master(results, settings)
     if err:
@@ -2178,7 +2195,90 @@ def read_orders(paths, settings, force=True):
     return expand_orders(results), msgs, ok
 
 
-def run_extractor_multi(paths, settings, mail=None, fmt=None, force=True):
+_READ_HEADER_KEYS = tuple(key for _label, key in _READ_FIELDS)
+_READ_RECORD_KEYS = {
+    "material_code", "description", "quantity", "unit_price", "amount"
+}
+
+
+def apply_read_overrides(results, override, settings):
+    """Apply Read-panel edits to extracted results before ERP preparation.
+
+    The saved extraction cache remains evidence of what the document printed;
+    overrides live only in the generation request. Record codes are then run
+    through the same Material Code normaliser and gate as extracted codes, so
+    editing a SKU cannot silently bypass the master-data safety check.
+    """
+    if not isinstance(override, dict):
+        return [], []
+
+    header = override.get("header") or {}
+    orders = override.get("orders") or {}
+    records = override.get("records") or {}
+    if isinstance(orders, list):
+        orders = {str(x.get("index")): x for x in orders
+                  if isinstance(x, dict) and x.get("index") is not None}
+    if isinstance(records, list):
+        records = {str(x.get("index")): x for x in records
+                   if isinstance(x, dict) and x.get("index") is not None}
+
+    changed_codes = []
+    for result in results or []:
+        order_index = result.get("order_index")
+        order_edit = orders.get(str(order_index)) if order_index is not None \
+            else None
+        edits = order_edit if isinstance(order_edit, dict) else header
+        if isinstance(edits, dict):
+            for key in _READ_HEADER_KEYS:
+                if key in edits:
+                    result[key] = str(edits.get(key) or "").strip()
+
+        for fallback_index, rec in enumerate(result.get("records") or []):
+            read_index = rec.get("_read_index", fallback_index)
+            edit = records.get(str(read_index))
+            if not isinstance(edit, dict):
+                continue
+            old_code = str(rec.get("material_code") or "").strip()
+            for key in _READ_RECORD_KEYS:
+                if key in edit:
+                    rec[key] = str(edit.get(key) or "").strip()
+            new_code = str(rec.get("material_code") or "").strip()
+            if new_code != old_code:
+                # Remove evidence belonging to the old spelling before the
+                # common normaliser evaluates the operator's replacement.
+                for key in ("suffix_autofilled", "suffix_original",
+                            "normalisation_warning", "backbone_code",
+                            "match_type"):
+                    rec.pop(key, None)
+                rec["needs_review"] = True
+                rec["review_reason"] = "Manually overridden SKU needs validation"
+                changed_codes.append((rec, new_code))
+
+    fixed, unknown, err = normalise_to_master(results, settings)
+    if err:
+        return fixed, ["material master check skipped: " + err]
+
+    # normalise_to_master deliberately preserves the extractor's review flag;
+    # for a newly typed code we must set that flag from the new value instead.
+    try:
+        mm = material_master.load(settings)
+        for rec, requested_code in changed_codes:
+            code = str(rec.get("material_code") or "").strip()
+            known = (bool(material_master.lookup(mm, code)) or
+                     bool(material_master.sku_full(settings, requested_code)))
+            if known:
+                rec["needs_review"] = False
+                rec["review_reason"] = ""
+            else:
+                rec["needs_review"] = True
+                rec["review_reason"] = "Manually overridden SKU is not in Material Codes"
+    except Exception as e:
+        return fixed, ["material master validation failed: " + str(e)]
+    return fixed, unknown
+
+
+def run_extractor_multi(paths, settings, mail=None, fmt=None, force=True,
+                        read_override=None):
     """Read the attachments ONCE, then write every format that was asked for.
 
     Returns: (success count, message, [(format, path), ...])
@@ -2197,6 +2297,14 @@ def run_extractor_multi(paths, settings, mail=None, fmt=None, force=True):
     if not results:
         return ok, (" | ".join(msgs) or
                     "Nothing could be read from this email's attachments."), []
+
+    if read_override:
+        fixed, unknown = apply_read_overrides(results, read_override, settings)
+        if fixed:
+            msgs.append("  = Read overrides normalised: " + ", ".join(fixed[:5]))
+        if unknown:
+            msgs.append("  ? overridden SKU not in Material Codes: " +
+                        ", ".join(unknown[:5]))
 
     if fmt in (None, ""):
         fmt = settings.get("erp_format", erp_excel.FORMAT_FULL)

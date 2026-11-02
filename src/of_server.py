@@ -845,7 +845,8 @@ def make_handler(db_path, master, settings):
                         # ticked means one reading and two files.
                         ok, msg, made = extractor_bridge.run_extractor_multi(
                             pdfs, settings, _master_values(mail, _master()),
-                            body.get("format"), force=False)
+                            body.get("format"), force=False,
+                            read_override=body.get("read_override"))
                         setf("note", msg[:500])
                         # Always write BOTH slots: a run that asks for one
                         # version after a run that asked for two must not leave

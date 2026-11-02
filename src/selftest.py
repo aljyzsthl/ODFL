@@ -533,10 +533,16 @@ def main_ui():
             ("the expanded reading has a separate nested SKU level",
              "let READSKU = {};" in html
              and "function toggleReadSku(event, k){" in html
-             and "if (skuOpen) h += readSkuBody(d);" in html, ""),
+             and "if (skuOpen) h += readSkuBody(d, k);" in html, ""),
             ("level one names both business account fields",
-             '<span class=\"k\">Sold-To</span>' in html
-             and '<span class=\"k\">Ship-To</span>' in html, ""),
+             "'Sold-To', 'sold_to'" in html
+             and "'Ship-To', 'ship_to'" in html, ""),
+            ("every Read business value uses the shared override input",
+             "const READHEADFIELDS = [" in html
+             and "function readEdit(k, scope, index, field, label, base){" in html
+             and "readEdit(k,'records',ri,'material_code'" in html, ""),
+            ("Generate carries the Read overrides to the backend",
+             "read_override: {header: edited.header || {}" in html, ""),
             ("the waveform occupies the same width as Generate",
              ".genbtn { width:76px;" in html
              and ".wave-menu { box-sizing:border-box;" in html
@@ -1519,6 +1525,64 @@ def run_bridge():
         fixed, unknown, err = B.normalise_to_master(results, settings)
         check("empty master: no-op", not fixed and not unknown and not err,
               f"fixed={fixed} unknown={unknown} err={err!r}")
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+    # 6 - Read-panel overrides are generation inputs, not cosmetic edits.
+    settings, base = make_settings(["GOOD-SKU", "SECOND-SKU"])
+    try:
+        results = [{
+            "po_number": "OLD-PO", "po_date": "2026-01-01",
+            "ship_to_address": "OLD ADDRESS",
+            "records": [{"_read_index": 0, "material_code": "BAD-SKU",
+                         "description": "old", "quantity": "1",
+                         "unit_price": "2", "amount": "2",
+                         "needs_review": True}]}]
+        fixed, unknown = B.apply_read_overrides(results, {
+            "header": {"po_number": "MANUAL-PO",
+                       "po_date": "2026-11-02",
+                       "ship_to_address": "99 OVERRIDE WAY"},
+            "records": {"0": {"material_code": "GOOD-SKU",
+                                "description": "manual description",
+                                "quantity": "7", "unit_price": "12.50",
+                                "amount": "87.50"}}}, settings)
+        row = results[0]["records"][0]
+        check("Read override replaces every editable single-PO header",
+              results[0]["po_number"] == "MANUAL-PO"
+              and results[0]["po_date"] == "2026-11-02"
+              and results[0]["ship_to_address"] == "99 OVERRIDE WAY",
+              str(results[0]))
+        check("Read override replaces every editable SKU value",
+              (row["material_code"], row["description"], row["quantity"],
+               row["unit_price"], row["amount"])
+              == ("GOOD-SKU", "manual description", "7", "12.50", "87.50"),
+              str(row))
+        check("a manually corrected SKU is revalidated against the master",
+              row.get("needs_review") is False, str(row))
+
+        multi = [
+            {"order_index": 0, "po_number": "A", "ship_to_city": "OLD A",
+             "records": [{"_read_index": 0, "material_code": "GOOD-SKU"}]},
+            {"order_index": 1, "po_number": "B", "ship_to_city": "OLD B",
+             "records": [{"_read_index": 1, "material_code": "SECOND-SKU"}]},
+        ]
+        B.apply_read_overrides(multi, {"orders": {
+            "0": {"po_number": "A-EDIT", "ship_to_city": "ALBANY"},
+            "1": {"po_number": "B-EDIT", "ship_to_city": "BUFFALO"},
+        }}, settings)
+        check("multi-PO overrides stay scoped to their own order",
+              [(r["po_number"], r["ship_to_city"]) for r in multi]
+              == [("A-EDIT", "ALBANY"), ("B-EDIT", "BUFFALO")],
+              str(multi))
+
+        invalid = [{"records": [{"_read_index": 0,
+                                  "material_code": "GOOD-SKU",
+                                  "needs_review": False}]}]
+        B.apply_read_overrides(invalid, {"records": {
+            "0": {"material_code": "NOT-IN-MASTER"}}}, settings)
+        check("an unknown manual SKU cannot bypass the material gate",
+              invalid[0]["records"][0].get("needs_review") is True,
+              str(invalid[0]["records"][0]))
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

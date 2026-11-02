@@ -1400,6 +1400,26 @@ PAGE = """<!DOCTYPE html>
   .rlf .k { width:92px; flex-shrink:0; color:var(--muted); }
   .rlf .v { font-weight:600; min-width:0; word-break:break-word; }
   .rlf .v.no { font-weight:400; color:#b6c2d4; font-style:italic; }
+  .rledit { min-width:0; flex:1 1 auto; }
+  .rledit input, .rlskubody input { box-sizing:border-box; width:100%;
+    min-height:29px; padding:4px 7px; border:1px solid #dbe3ee;
+    border-radius:6px; background:#fff; color:var(--text); font:inherit;
+    transition:border-color .15s ease,box-shadow .15s ease,background .15s ease; }
+  .rledit input:hover, .rlskubody input:hover { border-color:#b8c5d6; }
+  .rledit input:focus, .rlskubody input:focus { outline:none;
+    border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft); }
+  .rledit input.overridden, .rlskubody input.overridden {
+    border-color:#60a5fa; background:#eff6ff; }
+  .rlaudit { font-weight:600; min-width:0; word-break:break-word; }
+  .rledithint { display:flex; align-items:center; gap:6px; margin:1px 0 9px;
+    color:#64748b; font-size:11.5px; }
+  .rledithint:before { content:'✎'; color:var(--accent); font-weight:800; }
+  .rlorderedit { border:1px solid var(--border); border-radius:9px;
+    margin:0 0 10px; padding:8px 10px 4px; background:#fff; }
+  .rlorderhead { display:flex; align-items:center; gap:8px; margin-bottom:3px;
+    font-size:12.5px; font-weight:700; }
+  .rlorderhead .lines { margin-left:auto; color:var(--muted);
+    font-size:11.5px; font-weight:500; }
   .rlnote { font-size:11.5px; color:var(--muted); margin:8px 0 0; }
   .rlskuhead { width:100%; display:flex; align-items:center; gap:9px;
     margin-top:12px; padding:8px 10px; border:1px solid var(--border);
@@ -1413,6 +1433,13 @@ PAGE = """<!DOCTYPE html>
   .rlskuhead .rlskun { margin-left:auto; color:var(--muted);
     font-size:11.5px; font-weight:500; }
   .rlskubody { padding:0 2px 2px 22px; }
+  .rlskubody table { table-layout:fixed; }
+  .rlskubody th:nth-child(1) { width:22%; }
+  .rlskubody th:nth-child(2) { width:36%; }
+  .rlskubody th:nth-child(3) { width:11%; }
+  .rlskubody th:nth-child(4) { width:15%; }
+  .rlskubody th:nth-child(5) { width:16%; }
+  .rlskubody td { padding:4px; }
   .rlrow.readingrow .rlcar { opacity:.35; }
   .rlwarn { display:inline-flex; align-items:center; gap:5px; font-size:11px;
     font-weight:700; color:#92400e; background:var(--amber-soft);
@@ -3403,6 +3430,7 @@ let READQ = '';         // free-text filter on the read list
 let READOPEN = {};      // which rows are expanded
 let READSKU = {};       // second-level disclosure inside an expanded Read row
 let READDETAIL = {};    // id/index -> the reading, once fetched
+let READOVERRIDE = {};  // id/index -> only values manually changed in Read
 let READT = null;
 
 function dayOrders(){
@@ -3791,40 +3819,91 @@ function readRowHTML(r){
 // delivery address, the two dates and the postal code - plus the lines it found.
 // Served lazily because the list can hold hundreds of rows and a register is
 // meant to be one cheap request.
-// One row per ORDER. Used by the step-3 preview and by the Read tab: when a
-// document holds four POs, the PO date and the R.D.D are four values, and a
-// single cell showing one of them is how three orders got the first one's dates.
-function orderTable(ords){
-  let h = '<table class="ordtab"><tr><th>P/O No.</th><th>PO date</th>'+
-    '<th>R.D.D</th><th class="num">Lines</th><th class="num">Printed total</th>'+
-    '<th>Ship to</th></tr>';
-  for (const o of ords){
-    const addr = [o.address, o.city, o.zip].filter(Boolean).join(', ');
-    h += '<tr><td><b>'+esc(o.po || '—')+'</b></td>'+
-      '<td>'+esc(o.po_date || '—')+'</td>'+
-      '<td>'+esc(o.rdd || '—')+
-        (o.rdd_defaulted ? ' <span class="muted">(default)</span>' : '')+'</td>'+
-      '<td class="num">'+esc(String(o.lines || 0))+'</td>'+
-      '<td class="num">'+esc(o.total || '—')+'</td>'+
-      '<td class="ell" style="max-width:240px" title="'+esc(addr)+'">'+
-        esc(addr || '—')+'</td></tr>';
-  }
-  return h + '</table>';
+// Fields that can change what Generate writes. Audit metadata stays read-only.
+const READHEADFIELDS = [
+  ['P/O No.','po_number'], ['Printed total','document_total'],
+  ['PO date','po_date'], ['RDD','rdd'], ['RDD source','rdd_source'],
+  ['Ship-To name','ship_to_name'], ['Ship-To name 2','ship_to_name2'],
+  ['Ship-To name 3','ship_to_name3'], ['Ship-To name 4','ship_to_name4'],
+  ['Address','ship_to_address'], ['Street 2','ship_to_street2'],
+  ['Street 3','ship_to_street3'], ['Street 4','ship_to_street4'],
+  ['Street 5','ship_to_street5'], ['City','ship_to_city'],
+  ['State','ship_to_region'], ['ZIP','ship_to_zip']
+];
+
+function own(o, key){ return !!o && Object.prototype.hasOwnProperty.call(o, key); }
+
+function readOverrideValue(k, scope, index, field, base){
+  const all = READOVERRIDE[k] || {};
+  let bucket = all[scope] || {};
+  if (scope === 'orders' || scope === 'records') bucket = bucket[index] || {};
+  return own(bucket, field) ? bucket[field] : String(base == null ? '' : base);
 }
 
-function readSkuBody(d){
+function setReadOverride(input){
+  const k = input.dataset.key, scope = input.dataset.scope;
+  const index = input.dataset.index, field = input.dataset.field;
+  const all = READOVERRIDE[k] || (READOVERRIDE[k] = {});
+  let bucket = all[scope] || (all[scope] = {});
+  if (scope === 'orders' || scope === 'records')
+    bucket = bucket[index] || (bucket[index] = {});
+  const value = input.value;
+  const base = input.dataset.base || '';
+  if (value === base) delete bucket[field];
+  else bucket[field] = value;
+  input.classList.toggle('overridden', value !== base);
+}
+
+function readEdit(k, scope, index, field, label, base){
+  const value = readOverrideValue(k, scope, index, field, base);
+  const changed = value !== String(base == null ? '' : base);
+  return '<span class="rledit"><input type="text" value="'+esc(value)+'" '+
+    'data-base="'+esc(base == null ? '' : base)+'" data-key="'+esc(k)+'" '+
+    'data-scope="'+esc(scope)+'" data-index="'+
+      esc(index == null ? '' : index)+'" data-field="'+esc(field)+'" '+
+    'aria-label="'+esc(label)+'" '+
+    (changed ? 'class="overridden" ' : '')+
+    'oninput="setReadOverride(this)"></span>';
+}
+
+function readField(k, scope, index, label, field, value){
+  return '<div class="rlf"><span class="k">'+esc(label)+'</span>'+
+    readEdit(k, scope, index, field, label, value)+'</div>';
+}
+
+// One card per ORDER. A multi-PO document must keep every PO's date and
+// address independent; editing one card therefore creates an order-scoped
+// override rather than changing the document-wide header.
+function orderTable(ords, k){
+  let h = '';
+  for (const o of ords){
+    const oi = o.index;
+    h += '<div class="rlorderedit"><div class="rlorderhead">Order '+
+      esc(String((+oi || 0) + 1))+'<span class="lines">'+
+      esc(String(o.lines || 0))+' line'+(+o.lines === 1 ? '' : 's')+
+      '</span></div><div class="rlgrid">';
+    for (const f of READHEADFIELDS)
+      h += readField(k, 'orders', oi, f[0], f[1], o[f[1]] || '');
+    h += '</div></div>';
+  }
+  return h;
+}
+
+function readSkuBody(d, k){
   let h = '<div class="rlskubody">';
   if ((d.records || []).length){
     h += '<table style="margin-top:10px"><tr><th>Material</th>'+
       '<th>Description</th><th class="num">Qty</th>'+
       '<th class="num">Unit price</th><th class="num">Amount</th></tr>';
-    for (const r of d.records)
+    for (const r of d.records){
+      const ri = r.index;
       h += '<tr'+(r.review ? ' class="needrow"' : '')+'>'+
-        '<td><b>'+esc(r.code || '—')+'</b></td>'+
-        '<td class="ell" style="max-width:260px">'+esc(r.desc || '')+'</td>'+
-        '<td class="num">'+esc(r.qty || '')+'</td>'+
-        '<td class="num">'+esc(r.price || '')+'</td>'+
-        '<td class="num">'+esc(r.amount || '')+'</td></tr>';
+        '<td>'+readEdit(k,'records',ri,'material_code','Material',r.code||'')+'</td>'+
+        '<td>'+readEdit(k,'records',ri,'description','Description',r.desc||'')+'</td>'+
+        '<td>'+readEdit(k,'records',ri,'quantity','Qty',r.qty||'')+'</td>'+
+        '<td>'+readEdit(k,'records',ri,'unit_price','Unit price',r.price||'')+'</td>'+
+        '<td>'+readEdit(k,'records',ri,'amount','Amount',r.amount||'')+'</td></tr>';
+    }
     h += '</table>';
     if (d.more)
       h += '<div class="rlnote">+'+d.more+' more line(s) - open the file to '+
@@ -3844,7 +3923,8 @@ function readDetailBody(k){
   if (d.error)
     return '<div class="rlnote" style="color:var(--danger)">'+esc(d.error)+
       '</div>';
-  let h = '';
+  let h = '<div class="rledithint">Edit any business value below. Blue fields '+
+    'are overrides used by Generate; the saved source reading is preserved.</div>';
   // A reading taken before the address block was captured has no header keys at
   // all. Saying "not printed" about those would blame the PO for something the
   // old reader never looked for.
@@ -3858,24 +3938,20 @@ function readDetailBody(k){
   // beside the document-derived name, address and dates.
   const party = readListRows().find(r => r.id + ':' + r.index === k) || {};
   h += '<div class="rlgrid">'+
-    '<div class="rlf"><span class="k">Sold-To</span>'+
-      '<span class="v'+(party.sold_to ? '' : ' no')+'">'+
-      (party.sold_to ? esc(party.sold_to) : 'not selected')+'</span></div>'+
-    '<div class="rlf"><span class="k">Ship-To</span>'+
-      '<span class="v'+(party.ship_to ? '' : ' no')+'">'+
-      (party.ship_to ? esc(party.ship_to) : 'not selected')+'</span></div>'+
+    readField(k, 'party', '', 'Sold-To', 'sold_to', party.sold_to || '')+
+    readField(k, 'party', '', 'Ship-To', 'ship_to', party.ship_to || '')+
     '</div>';
   const ords = d.orders || [];
-  if (ords.length > 1) h += orderTable(ords);
+  if (ords.length > 1) h += orderTable(ords, k);
   if ((d.fields || []).length) h += '<div class="rlgrid">';
   for (const f of (d.fields || [])){
     // The timestamp is the only machine value in here; the rest are strings
     // lifted off the document and must be shown exactly as printed.
     const val = (f[0] === 'Read at' && f[1]) ? fmtDT(f[1])
               : (f[1] ? String(f[1]) : '');
-    h += '<div class="rlf"><span class="k">'+esc(f[0])+'</span>'+
-      '<span class="v'+(val ? '' : ' no')+'">'+
-      (val ? esc(val) : 'not printed')+'</span></div>';
+    if (f[2]) h += readField(k, 'header', '', f[0], f[2], f[1] || '');
+    else h += '<div class="rlf"><span class="k">'+esc(f[0])+'</span>'+
+      '<span class="rlaudit">'+(val ? esc(val) : '—')+'</span></div>';
   }
   if ((d.fields || []).length) h += '</div>';
   const skuOpen = !!READSKU[k];
@@ -3885,7 +3961,7 @@ function readDetailBody(k){
     '<span class="rlsubcar">&#9654;</span><span>SKU details</span>'+
     '<span class="rlskun">'+skuCount+' line'+(skuCount === 1 ? '' : 's')+
     '</span></button>';
-  if (skuOpen) h += readSkuBody(d);
+  if (skuOpen) h += readSkuBody(d, k);
   return h;
 }
 
@@ -4004,8 +4080,14 @@ async function readOutput(btn){
   toast(want.length > 1 ? 'Writing '+want.length+' Order Upload files…'
                         : 'Writing the Order Upload file…', true);
   const snap = rowSnapshot(id, index);
+  const edited = READOVERRIDE[k] || {};
+  const party = edited.party || {};
   const body = {id: id, action: 'confirm', index: index, format: want,
-    sold_to: snap.sold_to, ship_to: snap.ship_to, ship: snap.ship || {}};
+    sold_to: own(party, 'sold_to') ? party.sold_to : snap.sold_to,
+    ship_to: own(party, 'ship_to') ? party.ship_to : snap.ship_to,
+    ship: snap.ship || {},
+    read_override: {header: edited.header || {}, orders: edited.orders || {},
+                    records: edited.records || {}}};
   let r;
   try {
     r = await api('/api/action', body);
@@ -4024,6 +4106,7 @@ async function readOutput(btn){
   if (r.error){ alert(r.error); return; }
   delete READOPEN[k];
   delete READDETAIL[k];
+  delete READOVERRIDE[k];
   const made = (r.files || []).filter(f => f && f.url);
   // Same landing as the preview's Generate: the artifact and the register of
   // artifacts are one screen, and this row has just joined that register. A
