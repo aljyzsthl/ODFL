@@ -167,7 +167,7 @@ def check_engine():
         say(WARN, "engine",
             "max_tokens %d - a multi-PO document needs ~9,000 and an 8,000 "
             "budget cuts the JSON off mid-answer ('the reading was cut off'). "
-            "Set 16000, ceiling 32000 in CodeExtract/claude_config.json."
+            "Set max_tokens to 16000 or higher in CodeExtract/claude_config.json."
             % mt)
     else:
         say(OK, "engine", "max_tokens %d (ceiling %d)" % (mt, ceil or mt))
@@ -175,29 +175,27 @@ def check_engine():
 
 
 def check_token(eng, cfg):
-    head("4. the token")
+    head("4. the DeepSeek API key")
     if not eng:
         say(INFO, "token", "skipped - the reader did not import")
         return ""
     key = eng.api_key()
-    stored = str(((cfg or {}).get("claude") or {}).get("api_key") or "")
-    env_t = os.environ.get("ANTHROPIC_AUTH_TOKEN") or ""
-    env_k = os.environ.get("ANTHROPIC_API_KEY") or ""
+    user_cfg = load_json(os.path.join(BASE, "config", "settings.json")) or {}
+    stored = str((user_cfg.get("deepseek") or {}).get("api_key") or "")
+    env_k = os.environ.get("DEEPSEEK_API_KEY") or ""
     src = ""
     if stored:
-        src = "config/settings.json > claude.api_key"
-    elif env_t:
-        src = "$ANTHROPIC_AUTH_TOKEN"
+        src = "config/settings.json > deepseek.api_key"
     elif env_k:
-        src = "$ANTHROPIC_API_KEY"
+        src = "$DEEPSEEK_API_KEY"
     elif key:
-        src = "CodeExtract/.api_key"
+        src = "CodeExtract/.deepseek_api_key"
     if key:
         say(OK, "token", "found in %s  (…%s)" % (src, key[-4:]))
     else:
         say(FAIL, "token",
-            "no token anywhere. Paste the SEADEV token on Settings > PO "
-            "reading, or set ANTHROPIC_AUTH_TOKEN. Without it every Extract "
+            "no key anywhere. Paste the DeepSeek API key on Settings > PO "
+            "reading, or set DEEPSEEK_API_KEY. Without it every Extract "
             "fails and the row goes straight back to the Inbox.")
     return key
 
@@ -440,6 +438,7 @@ def check_python():
     if sys.version_info < (3, 8):
         say(FAIL, "python", "OrderFlow needs Python 3.8 or newer")
     for mod, why in (("openpyxl", "writing the ERP workbook"),
+                     ("pymupdf", "rendering PDF pages for DeepSeek"),
                      ("pywin32", "Outlook + Excel automation (Windows)")):
         try:
             __import__("win32com" if mod == "pywin32" else mod)
@@ -450,6 +449,9 @@ def check_python():
             elif mod == "pywin32":
                 say(FAIL, "python", "pywin32 missing (pip install pywin32) - "
                      "no mail can be collected and no Excel is written")
+            elif mod == "pymupdf":
+                say(FAIL, "python", "pymupdf missing (pip install pymupdf) - "
+                     "PDF pages cannot be sent to DeepSeek")
             else:
                 say(FAIL, "python", "openpyxl missing (pip install openpyxl) - "
                      "Generate cannot write any file")
@@ -464,14 +466,13 @@ VERDICT = {
     "engine": "CodeExtract/claude_engine.py must import before anything can be "
               "read - check the Python version and that the file was copied "
               "whole.",
-    "model": "The model id is not one the SEADEV endpoint serves. Put it back "
-             "to claude-sonnet-5 (or opus-5 / sonnet-4-6 / haiku-4-5) in "
+    "model": "The model id is not one the DeepSeek endpoint serves. Put it back "
+             "to deepseek-flash in "
              "CodeExtract/claude_config.json or on Settings.",
-    "token": "Paste the token on Settings > PO reading (or set "
-             "ANTHROPIC_AUTH_TOKEN), then press Test PO reading.",
-    "api": "The endpoint did not answer. This is a NETWORK problem, not a key "
-           "problem: put the PC on the network that can reach the SEADEV "
-           "endpoint (VPN / office LAN), or correct the endpoint on Settings.",
+    "token": "Paste the DeepSeek API key on Settings > PO reading (or set "
+             "DEEPSEEK_API_KEY), then press Test PO reading.",
+    "api": "The endpoint did not answer. Check Internet/proxy access to "
+           "api.deepseek.com, or correct the endpoint on Settings.",
     "db": "The database and the documents are out of step - copy "
           "data/attachments together with data/po_mail.db.",
     "master": "Master data is empty or unreadable - upload it on the Customer "

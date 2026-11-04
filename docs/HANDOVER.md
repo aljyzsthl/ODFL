@@ -5,6 +5,12 @@
 > Based on the source as of 2026-09-09. `file:line` references are valid for that snapshot and will
 > drift as you edit.
 
+> **Branch note — `prompt-profile-refactor`:** this test branch uses DeepSeek's
+> Anthropic-compatible API (`deepseek-flash`) and renders PDFs to page images
+> with PyMuPDF. Provider details later in this historical handover may still
+> describe the Claude configuration on `main`; the executable contract is in
+> `CodeExtract/claude_engine.py` and `CodeExtract/claude_config.json`.
+
 ---
 
 ## 1. What the program does
