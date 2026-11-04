@@ -4049,11 +4049,25 @@ def run_extract():
     material_help = claude_engine._ORDER_SCHEMA["properties"]["lines"][
         "items"]["properties"]["material_code"]["description"]
     check("the prompt treats coded installation rows as ordered lines",
-          "NEVER skip a coded installation" in prompt
-          and "SERVICE SKU" in prompt)
+          "Include installation, delivery and recycling" in prompt
+          and "service/add-on" in prompt)
     check("the prompt preserves L-INST instead of stripping it as a prefix",
-          "L-INST is a real service-SKU prefix" in prompt
+          "L-INST/...` is a real service SKU" in prompt
           and "L-INST/E3-DW" in material_help)
+    check("the prompt is composed from one core contract and three profiles",
+          all(x in prompt for x in (
+              "UNIVERSAL CONTRACT", "PROFILE: STANDARD PO",
+              "PROFILE: BUILDER WORK ORDER",
+              "PROFILE: CMH / CLAYTON PURCHASE ORDER")), prompt[:200])
+    check("profile-specific conventions are explicitly isolated",
+          "DOCUMENT PROFILE ISOLATION" in prompt
+          and "Never transfer one profile's" in prompt, "isolation rule missing")
+    check("the refactor removed the accumulated prompt bulk",
+          len(prompt) < 8000, f"{len(prompt)} characters")
+    check("the standard profile is free of customer-specific exceptions",
+          "Clayton" not in claude_engine._PROFILE_STANDARD_PO
+          and "Included Dishwasher" not in claude_engine._PROFILE_STANDARD_PO,
+          claude_engine._PROFILE_STANDARD_PO)
 
     # ---- the listed spelling wins -----------------------------------------
     kept, _ = claude_engine.apply_gate([rec("DVE45T6000W")], bb, "t.pdf", "1")
@@ -4202,8 +4216,9 @@ def run_extract():
         check(label, needle in prompt, "missing from _SYSTEM")
     check("the line schema asks for the per-line tax",
           "sales_tax" in str(claude_engine._ORDER_SCHEMA["properties"]["lines"]))
-    check("the request itself warns that the document may be a work order",
-          "builder WORK ORDER" in claude_engine._USER_PDF)
+    check("the request delegates layout exceptions to the matching profile",
+          "matching document profile" in claude_engine._USER_PDF
+          and "do not transfer" in claude_engine._USER_PDF)
 
     # ── 2026-11-03: the CMH / Clayton PO ────────────────────────────────────
     # `PO#: 00952 - 2337110`, five appliance rows whose "Item Number" column is
@@ -4299,7 +4314,7 @@ def run_extract():
     for label, needle in (
             ("the prompt refuses a digits-and-hyphens customer part number",
              "025-00100-00398"),
-            ("...and names the column the model hides in", '"VIN"'),
+            ("...and names the column the model hides in", "`VIN`"),
             ("...and the CMH number's department prefix", "Dept 00952"),
             ("...and 'Date Needed' as an R.D.D label", "Date Needed"),
             ("...and the site name above the street", "Clayton Athens")):
@@ -5106,19 +5121,21 @@ def run_multipo():
     check("...required, so a single-order document still answers in it",
           claude_engine._TOOL["input_schema"]["required"] == ["orders"])
     check("...one entry per DISTINCT order, said in the prompt",
-          "one entry in `orders` per DISTINCT ORDER" in claude_engine._SYSTEM)
+          "one `orders` entry per DISTINCT explicit order number"
+          in claude_engine._SYSTEM)
     check("...counting a WORK ORDER number as an order number",
-          "a WORK ORDER number" in claude_engine._SYSTEM)
+          "WORK ORDER NUMBER" in claude_engine._SYSTEM)
     check("...and which order a line belongs to (the nearest header above)",
-          "nearest one ABOVE" in claude_engine._SYSTEM)
+          "nearest explicit order header above" in claude_engine._SYSTEM)
     check("...first inventories every page before extracting lines",
-          "FIRST PASS" in claude_engine._SYSTEM
-          and "inspect EVERY PAGE" in claude_engine._SYSTEM)
+          "INVENTORY BEFORE LINES" in claude_engine._SYSTEM
+          and "Inspect every page" in claude_engine._SYSTEM)
     check("...verifies the returned order count against explicit PO numbers",
-          "exactly one entry for every distinct explicit order number"
+          "verify the count of `orders` against the distinct explicit order numbers"
           in claude_engine._SYSTEM)
     check("...does not deduplicate repeated products across different POs",
-          "Do not deduplicate across orders" in claude_engine._SYSTEM)
+          "do not deduplicate equal lines across different orders"
+          in claude_engine._SYSTEM)
     item = props["orders"]["items"]["properties"]
     check("each order carries its own number, total, dates and address",
           all(k in item for k in ("po_number", "document_total", "po_date",

@@ -22,6 +22,13 @@ material code the Material Code list does not carry is set aside for a human and
 never reaches ERP, so the model's output is a proposal, not an instruction. See
 `docs/HANDOVER.md` chapter 4.
 
+The extraction prompt is organised as one short **universal contract** plus
+isolated layout profiles for a standard PO, a builder Work Order and a
+CMH/Clayton PO. A profile applies only when its identifying cues are visible;
+customer-specific column meanings are not mixed into the general rules. SKU
+validity and suffix selection remain deterministic master-data decisions after
+the model returns.
+
 ⚠️ **A purchase order leaves the PC on every extraction.** That is the trade
 for not maintaining a 7,200-line local PDF engine (retired into
 `CodeExtract/_legacy/`). Two things must be configured, both on the Settings

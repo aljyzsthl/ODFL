@@ -548,7 +548,8 @@ Messages API call says "return the ordered line items of a purchase order": the
 model would happily summarise the document in prose. So the extraction is
 pinned down twice, and both halves live in `claude_engine.py`:
 
-1. **`_SYSTEM`** — the fourteen rules below, sent as the `system` field.
+1. **`_SYSTEM`** — assembled from one universal contract and three isolated
+   layout profiles, then sent as the `system` field.
 2. **`_TOOL`** — a JSON schema emitted by a **forced tool call**
    (`tool_choice`), so the reply is a structured payload or an error, never a
    paragraph. The reply is `orders[]`, one entry per PO in the document (4.7.1),
@@ -559,45 +560,46 @@ pinned down twice, and both halves live in `claude_engine.py`:
 Both halves are part of `config_signature()`, so editing either one invalidates
 the cache by itself (4.6) — no manual version bump to forget.
 
-The prompt is **not** customer-specific and should not become so. Everything
-that differs between customers (which code is valid, how a short SKU maps to a
-FULL SKU, which market suffix applies) is master data and is decided afterwards
-by `apply_gate()` (4.4). Prompting per customer would put a second authority
-next to the Material Code list, which is exactly the split this project spent
-2026-10 removing.
+The prompt has two responsibilities and keeps them visibly separate:
 
-Every rule exists because of a failure the local engine had; do not trim one
-without knowing which.
+1. **`_CORE_SYSTEM` — universal contract.** Eight rules cover order inventory,
+   per-order ownership, what is and is not a line, exact transcription,
+   material-code meaning, money fields, header fields and audit fields. These
+   are invariants for every document and are the only place a general rule is
+   changed.
+2. **Layout profiles — exceptions with explicit cues.** `_PROFILE_STANDARD_PO`,
+   `_PROFILE_WORK_ORDER` and `_PROFILE_CMH` explain where those same fields sit
+   on three known paper layouts. `DOCUMENT PROFILE ISOLATION` says a profile is
+   applied only when its identifying cues are visibly present and its conventions
+   must never leak into another document.
 
-| Rule | Prevents |
+This replaced the former fourteen-rule monolith on 2026-11-04. Work-order and
+Clayton examples had accumulated inside eight different general rules; a fix for
+one layout could therefore change how an unrelated PO was interpreted. The
+profile form keeps the same `_TOOL` schema and post-processing, while reducing
+the system text from roughly 11,900 to 6,900 characters.
+
+Profiles are **layout-specific, not authorities for SKU validity**. Which code
+is valid, how a short SKU maps to a FULL SKU and which market suffix applies
+remain master data decided afterwards by `apply_gate()` (4.4). Do not put an
+account's product list or guessed replacement values in a profile.
+
+The universal rules still prevent the original failures:
+
+| Contract area | Prevents |
 |---|---|
-| 1. one `orders[]` entry per DISTINCT PO | four POs in one PDF published as one order under the first one's number (4.7.1) |
-| 2. copy values exactly as printed | a reformatted amount changing the value |
-| 3. never invent a value — empty beats plausible | a missing quantity being filled with something a human cannot distinguish from a real one (principle 2) |
-| 4. skip subtotal / total / tax / freight rows | a summary row becoming an order line |
-| 5. skip a model named inside another item's description | "…includes RF28R7201SR…" producing a phantom line — the bug class the old engine spent the most code on |
-| 6. the identifier alone, no description words | `WF45B6300APPLATINUM` in the Material Code column |
-| 7. one money figure → `unit_price`, `amount` empty, do not multiply | an invented extended amount |
-| 8. `page` and `source_line` | a reading nobody can verify against the document |
-| 9. `po_number` / `document_total` | no total to check the lines against (4.5) |
-| 10. `po_date` and `rdd` are two different dates | a "required by" date being published as the order date (or the reverse), which moves a delivery promise |
-| 11. `ship_to` is the DELIVERY address | the bill-to block or the seller's own address being shipped to |
-| 12. per order: its own number, total, dates and address | one order's R.D.D and total applied to three others (4.7.1) |
-| 13. a line belongs to the order whose header is nearest ABOVE it | a page continuing a table being read as a new order, or its lines landing in the next one |
-| 14. the buyer block is letterhead, not an order | four entries per order because four addresses were printed |
+| inventory + ownership | several POs merged under the first number, or continuation lines assigned to the next order |
+| ordered lines only | totals, field labels and models mentioned in prose becoming phantom lines |
+| exact transcription + empty beats plausible | invented or silently repaired quantities, prices, amounts and dates |
+| material-code meaning | description words, store prefixes and customer references being published as the SKU |
+| money fields | one printed price being multiplied into an invented amount, or line tax being mistaken for unit price |
+| order header | PO date/R.D.D swaps, bill-to used as ship-to, or the first address copied across every order |
+| audit fields | a reading that cannot be verified against its printed page and row |
 
-Rules 12-14 were added 2026-10-28 with multi-PO support (4.7.1). Rules 10 and 11
-were added 2026-10-22 with the header block. Both name the
-labels they are looking for ("Required Date", "RDD", "ETA Date"; "Ship To",
-"Deliver To", "Consignee") instead of leaving the model to guess which date and
-which address block are meant, and both prefer an empty string to a guess — the
-same rule 3 the line items follow.
-
-**2026-11-02:** rules 1, 3, 6, 8, 9, 11, 12 and 13 gained the builder
-**work order** case (4.3.1) — a second document family this desk receives, which
-the PO-only wording silently rejected. The rule *count* did not change: each
-addition says what the same rule means on the other paper, so the two families
-cannot drift into two prompts.
+When adding a fourth document family, add one profile section and its identifying
+cues. Do not thread its examples through the universal rules. If a behaviour can
+be decided from master data, a date parser or arithmetic, implement it after the
+model instead of adding another prompt exception.
 
 The response is a **forced tool call** (`tool_choice`), not prose with JSON in
 it. That is what makes the gate possible: the engine always gets a structured
