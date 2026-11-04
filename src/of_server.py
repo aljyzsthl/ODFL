@@ -568,6 +568,15 @@ def make_handler(db_path, master, settings):
                                 "name": store.att_name(path),
                                 "ext": os.path.splitext(path)[1]
                                          .lstrip(".").lower(),
+                                # The mail's own subject, shown as a column on
+                                # the Read tab (2026-11-02). The register is
+                                # keyed by "mailId:attachmentIndex", so without
+                                # it a row of four POs from one mail gave four
+                                # identical-looking lines with no way to tell
+                                # which order in the email each one was.
+                                "subject": mail.get("subject") or "",
+                                "sender": mail.get("sender") or "",
+                                "received_at": mail.get("received_at") or "",
                                 "customer": mail.get("customer") or "",
                                 "sold_to": sold,
                                 "ship_to": ship,
@@ -579,10 +588,16 @@ def make_handler(db_path, master, settings):
                                 "po_count": summary.get("po_count") or 1,
                                 "po_numbers": summary.get("po_numbers") or [],
                                 "read_at": summary.get("read_at"),
+                                # The Output tab lists the same rows once they
+                                # are written, so the two dates travel with
+                                # them instead of being fetched again.
+                                "po_date": summary.get("po_date") or "",
+                                "rdd": summary.get("rdd") or "",
                                 "lines": summary.get("lines"),
                                 "review": summary.get("review"),
                                 "done": status == "Done",
                                 "erp_file": st.get("erp_file") or "",
+                                "erp_file2": st.get("erp_file2") or "",
                                 "note": st.get("note") or mail.get("note") or "",
                             })
                     self._json({"rows": rows})
@@ -772,6 +787,39 @@ def make_handler(db_path, master, settings):
                     if action == "reject":
                         setf("status", "Rejected")
                         setf("confirmed_at", now)
+                        self._json({"ok": True})
+                    elif action == "unwrite":
+                        # REDO on an Output row (2026-11-02): undo the WRITE and
+                        # leave the reading alone, so the order goes back to the
+                        # Read tab with its Generate button - not back to the
+                        # Inbox, where it would have to be read (and paid for)
+                        # again. The file itself stays on disk; it is simply no
+                        # longer listed against this order.
+                        blank = {"status": "Not yet", "confirmed_at": "",
+                                 "erp_file": "", "erp_file2": "", "note": "",
+                                 "erp_uploaded": 0}
+                        targets = (docs if idx is None
+                                   else [(i, p) for i, p in docs if i == idx])
+                        for i, _p in targets:
+                            for f, v in blank.items():
+                                try:
+                                    store.update_att_field(conn, mail_id, i, f, v)
+                                except Exception:
+                                    pass
+                        # A mail-level 'Done' would keep the row in Output even
+                        # after every attachment was cleared, so it goes too -
+                        # but only when nothing is still written for this mail.
+                        keep = any(
+                            (store.get_att_states(conn, mail_id)
+                             .get(str(i)) or {}).get("status") == "Done"
+                            for i, _p in docs)
+                        if not keep:
+                            store.update_field(conn, mail_id, "status", "Not yet")
+                            store.update_field(conn, mail_id, "confirmed_at", "")
+                            store.update_field(conn, mail_id, "erp_file", "")
+                            store.update_field(conn, mail_id, "erp_file2", "")
+                            store.update_field(conn, mail_id, "note", "")
+                            store.update_field(conn, mail_id, "erp_uploaded", 0)
                         self._json({"ok": True})
                     elif action == "confirm":
                         # Confirm exactly the order documents this row stands
@@ -1334,6 +1382,69 @@ def make_handler(db_path, master, settings):
                                 break
                         self._json(out or {"error":
                             "This document has no saved reading yet."})
+                    except Exception as e:
+                        self._json({"error": str(e)}, 500)
+
+                elif self.path == "/api/read_forget":
+                    # REDO on a Read row: forget the reading and put the order
+                    # back in the Inbox (2026-11-02).
+                    #
+                    # The reading is DELETED from disk, not invalidated. What
+                    # keeps a row out of the Inbox is the presence of a reading
+                    # (`/api/read_list` lists files, not flags), so a
+                    # still-present-but-stale cache would leave the order in
+                    # Read while claiming to be unread - and then be served
+                    # again on the next Extract.
+                    #
+                    # The per-attachment Done/erp_file marks go too, or the row
+                    # would disappear from Read and reappear in Output.
+                    #
+                    # Deleting is safe: a reading is the cached result of ONE
+                    # API call. The document itself, the mail and every
+                    # generated Order Upload file stay where they are.
+                    try:
+                        mail_id = int(body.get("id"))
+                        mail = store.get_mail(conn, mail_id)
+                        if not mail:
+                            self._json({"error": "mail not found"}, 404)
+                            return
+                        idx = body.get("index")
+                        idx = None if idx in (None, "") else int(idx)
+                        docs = store.order_attachments(
+                            json.loads(mail.get("pdf_paths") or "[]"),
+                            settings.get("_base", ""))
+                        targets = [(i, p) for i, p in docs
+                                   if idx is None or i == idx]
+                        if not targets:
+                            self._json({"error":
+                                "This row has no order document to send back."},
+                                404)
+                            return
+                        gone = 0
+                        for _i, p in targets:
+                            if extractor_bridge.forget_reading(settings, p):
+                                gone += 1
+                        blank = {"status": "Not yet", "confirmed_at": "",
+                                 "erp_file": "", "erp_file2": "", "note": "",
+                                 "erp_uploaded": 0}
+                        for i, _p in targets:
+                            for f, v in blank.items():
+                                try:
+                                    store.update_att_field(conn, mail_id, i, f, v)
+                                except Exception:
+                                    pass
+                        # Only a mail whose EVERY document came back is
+                        # "unprocessed" again; a four-PO email with one order
+                        # returned must keep the other three in Output.
+                        if len(targets) == len(docs):
+                            for f, v in blank.items():
+                                if f == "status":
+                                    continue        # 'Not yet' is the default
+                                store.update_field(conn, mail_id, f, v)
+                            store.update_field(conn, mail_id, "status",
+                                               "Not yet")
+                        self._json({"ok": True, "forgotten": gone,
+                                    "name": store.att_name(targets[0][1])})
                     except Exception as e:
                         self._json({"error": str(e)}, 500)
 

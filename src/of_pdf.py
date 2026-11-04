@@ -1884,6 +1884,28 @@ def cached_read(settings, path):
         return None
 
 
+def forget_reading(settings, path):
+    """Delete the saved reading for one document. True when a file was removed.
+
+    The Redo button on the Read tab is the only caller. A reading on disk is
+    exactly what keeps an order OUT of the Inbox, so "send it back" has to
+    delete the file - clearing a flag would leave the row listed here and serve
+    the same reading again on the next Extract.
+
+    Nothing else points at this file: it is the cached answer to one API call,
+    and the document, the mail and any generated Order Upload are untouched.
+    """
+    try:
+        eng = _import_engine(settings)
+        p = eng.get_cache_path(path)
+        if os.path.exists(p):
+            os.remove(p)
+            return True
+    except Exception:
+        return False
+    return False
+
+
 def _cache_orders(d):
     """The orders a saved reading holds, as small display dicts.
 

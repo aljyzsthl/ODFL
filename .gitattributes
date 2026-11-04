@@ -1,0 +1,15 @@
+# Line endings.
+#
+# The sources are stored with LF (that is what git normalises to), but these
+# files are RUN by cmd.exe on Windows: a .bat with LF endings breaks on labels,
+# `goto` and multi-line blocks. Pin them so every checkout - Windows, Mac or a
+# copy of the folder - gets the form that actually runs.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Already-compressed or opaque files: never touch their bytes.
+*.xlsx binary
+*.XLSX binary
+*.pdf binary
+*.db binary

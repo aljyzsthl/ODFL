@@ -118,6 +118,13 @@ Settings screen under **PO reading** (or set `$ANTHROPIC_AUTH_TOKEN`). Without o
 every PO comes back with zero codes. Press **Test PO reading** there to confirm the
 address, the token and the model before trusting a real order.
 
+**Moved the folder to another PC?** Run `python doctor.py` first. One read-only
+pass reports the folders, every file `.gitignore` keeps out of git (`settings.json`,
+the master data, `erp_template.XLSX`, the Material Code list), the token and where
+it came from, the 16-token round trip, the master-data counts, and whether the
+database's attachments are actually on this disk — then names the fix for whatever
+failed. Exit code 0 means nothing failed.
+
 If a relaunch shows the **previous** interface, a leftover instance still owns the port
 (8766): OrderFlow now says so on the console, prints the listener PID
 (`taskkill /f /pid <pid>` closes it) and opens no window, instead of silently pointing
@@ -169,6 +176,7 @@ Share the zip; colleagues run it the same way as under "Developer run" above.
 
 ## Folders
 ```
+doctor.py      one-command environment check (read-only) - run it on a new PC
 src\           dashboard (Python + a single HTML page)
                orderflow.py  entry point: settings, facades, wiring
                of_core.py    store, classifier, dedup
@@ -204,6 +212,115 @@ pair or domain template **wipes that table** — an upload replaces it wholesale
 tables are separate files, so each is lost on its own.
 
 ## Layout history
+**2026-11-03 (later) — the CMH/Clayton PO reads: the model was in the "VIN"
+column.**
+
+A CMH Manufacturing purchase order came back with five codes the Material Code
+list does not carry, so every line sat in review.
+
+- **The column called `Item Number` is the builder's own part** (`025-00100-00398`),
+  and the **Samsung model is in the column headed `VIN`** (`RS27T5201SR/AA`).
+  Rule 8 now says a digits-and-hyphens token is never the material code and to
+  take the model wherever it sits.
+- **And the gate no longer trusts the answer over the row:** if the returned code
+  is not in the master and the row prints exactly one code the master knows, that
+  code is published and the printed part is kept for audit. Two candidates → no
+  guess, still review.
+- **`PO#: 00952 - 2337110`** — `00952` is the department (printed again as
+  `Dept 00952`); the order number is `2337110`.
+- **`Date Needed`** joined the R.D.D labels, `PO Total` / `PO Cost` the total
+  labels, and the ship-to block's site-name line is documented.
+
+`src/selftest.py` extract 126 → 141 checks: the whole PO as a fixture, plus the
+part-number rescue and the two-models-in-one-row refusal.
+
+**2026-11-03 — a machine that cannot read a PO now says what is missing.**
+
+The workspace was moved to another PC and every Extract ended as "goes to Read,
+cannot be read, comes back to the Inbox". That is the *correct* behaviour for a
+failed reading — nothing is cached, so the row returns — but the reason lived in
+an alert box that vanished with the click that dismissed it.
+
+- **`doctor.py`** (beside `run_dashboard.bat`): one read-only pass over the
+  folders, the files `.gitignore` keeps out of git, the token and where it comes
+  from, the endpoint round trip, the master data, the ERP template and whether
+  the database's attachments exist on this disk. It names the fix for whatever
+  failed, and exits non-zero if anything did.
+- **The Read tab keeps the failure on screen** as a red card with the server's
+  own message, **Open Settings** and **Dismiss** — instead of an alert that
+  leaves no trace.
+- **A dropped request is a failure, not a stuck row.** If the local server went
+  away mid-click the row kept its waveform forever *and* the order stayed hidden
+  from the Inbox, because an in-flight reading counts as read.
+
+**2026-11-02 (later) — the three tabs became three lists, and each one can hand
+the order back.**
+
+- **Extract now takes the row OUT of the Inbox.** It used to stay there while
+  also appearing on Read, so the same order could be extracted twice — and the
+  second time paid for the same reading again. Inbox = not read yet, Read = read
+  and not written, Output = written; a row is in exactly one of them.
+- **The Read list carries the mail's subject.** Four POs from one email used to
+  be four rows that looked identical.
+- **Redo on Read** sends the PO back to the Inbox. It deletes the saved reading
+  — that file is what keeps the row out of the Inbox — and asks first, because a
+  reading is one paid API call. The document and any generated file stay.
+- **Generate now works like Extract:** the row moves to the tab it is going to,
+  and that tab shows the write in flight where the finished row will land. No
+  more spinning button on a row that has already left.
+- **Output is simplified to what it is for:** subject, PO, R.D.D, a **Download**
+  per file, and **Redo** (undo the write, keep the reading). The green banner and
+  the nine-column table are gone from this tab — the table, with **Mark
+  uploaded** and the date filter, is still the Completed screen.
+
+`src/selftest.py` 612 → 619 checks; the flow was driven end-to-end against a
+real server and a real browser (Inbox → Read → Output → both Redos).
+
+**2026-11-02 (even later) — Full / Simple is per Read row.**
+
+- The switch used to read and write the desk-wide setting: ticking Simple on one
+  order re-rendered every row from it, so two orders could not be written in
+  different versions. Each row now keeps its own choice, starts from the desk
+  default, and a full repaint does not lose it.
+- **A row may choose nothing.** The thumb fades out so an empty switch cannot be
+  mistaken for "Full", and **Generate refuses** with a short toast instead of
+  quietly writing the default.
+- **The "keep at least one version" hint no longer parks at the bottom of the
+  page.** It was emitted as a *sticky* toast (spinner, until something cleared
+  it) and nothing ever cleared it; it is now an ordinary 2-second toast.
+
+**2026-11-02 — a builder work order reads like a PO.**
+
+The desk also receives KB Home work orders, and they broke every assumption the
+prompt made about a Samsung PO. Nothing errored: the document simply produced no
+lines, or lines with no code.
+
+- **A work order number is an order number.** `Work order 182555832-2`, taken
+  from the block beside the dates and **with its revision suffix**. The bare
+  number under the big "Work order" title is the customer's job reference.
+- **The code is the first token of the Description cell**, because there is no
+  item column: `DSW- L-INST/E3-DW` → `L-INST/E3-DW`, `DSW-SSI Samsung
+  DW80CG4021SRAA 53 dBA` → `DW80CG4021SRAA`. The three-letter store prefixes
+  (`DSW-`, `MCR-`, `RNG-`, `REF-`, …) are segments to drop; `L-INST` is not.
+- **`<prefix>- Included <appliance>` is not a line.** The appliance is the
+  `<prefix>-SSI Samsung <MODEL>` row and the install is the `<prefix>- L-INST/…`
+  row, so one appliance is three printed rows and two order lines.
+- **The RDD is a table row**, `1. Requested Delivery Date`, with the value
+  underneath as `RDD 11.30.26` — and a dotted date is now parsed
+  (`%m.%d.%y`), where before it was unreadable and the R.D.D silently fell back
+  to "PO date + 6 working days".
+- **The delivery address has no `Ship To` label** on these: it is the block
+  under the `Work order` heading, and the line above it names the community and
+  lot, not the street.
+- **A `Sales tax` column makes `qty × price < amount`** on every appliance line.
+  The printed tax is now read per line and used by `check_arithmetic()`, and the
+  total is compared against the printed amounts — so a correctly read work order
+  raises **no** diagnostic. Four false alarms on a good document is how the real
+  one gets ignored.
+
+`src/selftest.py extract` 95 → 123 checks, including the whole document as a
+fixture (6 lines, all confirmed, zero diagnostics).
+
 **2026-10-23 (evening) — the flow is navigable, overrides moved to the preview,
 and mailbox reading shows real progress.**
 

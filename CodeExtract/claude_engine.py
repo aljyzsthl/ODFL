@@ -120,7 +120,15 @@ DEFAULTS = {
     # claude-sonnet-4-6, claude-haiku-4-5.
     "model": "claude-sonnet-5",
     "base_url": DEFAULT_BASE_URL,
-    "max_tokens": 8000,
+    # The OUTPUT budget, not the document size. One line item is ~100 tokens
+    # (nine fields, `source_line` being most of it), so a one-page PO needs a
+    # few hundred and a four-PO bundle of 88 lines needs ~9,000. 8,000 was the
+    # old value and it cut exactly those bundles off mid-JSON - see `_call()`.
+    "max_tokens": 16_000,
+    # A truncated answer is retried once with double the room, up to this. The
+    # endpoint accepts more, but a PO that needs 32k is a sign the document
+    # should be split, so this is a ceiling and not a target.
+    "max_tokens_ceiling": 32_000,
     "timeout_sec": 180,
     "max_pdf_bytes": 20_000_000,     # request limit is 32 MB
     "max_input_chars": 200_000,      # recovered text (DRM path)
@@ -414,19 +422,30 @@ _ORDER_SCHEMA = {
                                        "SKU. If an ITEM ID prefixes a product model "
                                        "with store segments, omit those segments: "
                                        "printed 51E-863-RT16A6195SR means "
-                                       "RT16A6195SR."},
+                                       "RT16A6195SR, and printed 'DSW-SSI Samsung "
+                                       "DW80CG4021SRAA 53 dBA' means "
+                                       "DW80CG4021SRAA."},
                     "description": {"type": "string"},
                     "quantity": {"type": "string"},
                     "unit": {"type": "string"},
                     "unit_price": {"type": "string"},
                     "amount": {"type": "string"},
+                    "sales_tax": {
+                        "type": "string",
+                        "description": "The tax printed in THIS line's own "
+                                       "tax column ('Sales tax', 'Tax'), "
+                                       "digits only. Empty string when the "
+                                       "document has no such column or "
+                                       "prints none for the line. It is NOT "
+                                       "part of unit_price - the printed "
+                                       "amount already includes it."},
                     "po_line": {"type": "string"},
                     "page": {"type": "string"},
                     "source_line": {"type": "string"},
                 },
                 "required": ["material_code", "description", "quantity",
-                             "unit", "unit_price", "amount", "po_line",
-                             "page", "source_line"],
+                             "unit", "unit_price", "amount", "sales_tax",
+                             "po_line", "page", "source_line"],
             },
         },
     },
@@ -436,9 +455,9 @@ _ORDER_SCHEMA = {
 
 _TOOL = {
     "name": "return_line_items",
-    "description": "Return the purchase order(s) read from the document, each "
-                   "with its own number, total, dates, delivery address and "
-                   "ordered line items.",
+    "description": "Return the purchase order(s) or work order(s) read from the "
+                   "document, each with its own number, total, dates, delivery "
+                   "address and ordered line items.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -457,48 +476,60 @@ _TOOL = {
     },
 }
 
-_SYSTEM = """You read purchase orders (POs) for Samsung home appliances and return what was ordered, as structured data.
+_SYSTEM = """You read purchase orders (POs) and builder work orders for Samsung home appliances and return what was ordered, as structured data. Both kinds of document are an "order" below, and a work order is never a lesser one: it still names the appliances, the install services, the delivery address and the date the customer wants them.
 
 Follow these rules exactly.
 
-1. FIRST PASS - before extracting any line item, silently inspect EVERY PAGE in sequence and inventory the explicit purchase-order number printed on each page. Then return one entry in `orders` per DISTINCT PURCHASE ORDER in that inventory. A document may hold several POs glued together: four pages, each with its own "P/O #" header and its own table, are FOUR orders. At the end, verify that `orders` contains exactly one entry for every distinct explicit order number you found. Never merge two different order numbers into one entry, and never split one order number across two entries.
+1. FIRST PASS - before extracting any line item, silently inspect EVERY PAGE in sequence and inventory the explicit order number printed on each page: a P/O number, an Order No, or a WORK ORDER number (rule 11 says which block to read it from). Then return one entry in `orders` per DISTINCT ORDER in that inventory. A document may hold several orders glued together: four pages, each with its own "P/O #" header and its own table, are FOUR orders. A page that only RE-STATES the number already above it - a continuation page, or the blank back of a work order - does not start a new order. At the end, verify that `orders` contains exactly one entry for every distinct explicit order number you found. Never merge two different order numbers into one entry, and never split one order number across two entries.
 
 2. A line item belongs to the order whose header (the P/O number block) is the nearest one ABOVE it. A page with a different explicit P/O number ALWAYS starts a new order, even when its buyer, ship-to address, products, layout, prices or dates look almost identical to another page. When a page continues the previous page's table and prints no new order number, its lines belong to the order above it - usually the one on the previous page. When a page prints a NEW order number, every line below that header belongs to the new order.
 
-3. Inside each order, return one object per ORDERED LINE ITEM - one row of that order's items table that names a product, installation, delivery, recycling or other service/add-on ordered and carries its own quantity. An installation or service row with its own SKU, quantity and/or price is an ordered line even though it is not a physical appliance. Do not deduplicate across orders: if two different PO numbers order the same product or service with the same quantity and price, that line must appear once in EACH order.
+3. Inside each order, return one object per ORDERED LINE ITEM - one row of that order's items table that names a product, installation, delivery, recycling or other service/add-on ordered and carries its own quantity. An installation or service row with its own SKU, quantity and/or price is an ordered line even though it is not a physical appliance. A WORK ORDER prints three rows per appliance and only two of them are goods: "DSW- Included Dishwasher - Samsung" (quantity 1.00, price 0.00, no code) announces that the appliance is bundled and is NOT a line; "DSW- L-INST/E3-DW, Samsung, Dishwasher install..." is the install service; "DSW-SSI Samsung DW80CG4021SRAA 53 dBA, Hybrid Tub, Flat Handle, Stainless" is the appliance itself. Return the service row and the appliance row, and skip the "Included" one. The same rule covers "MCR- Included Countertop Microwave" and "RNG - Included Range - Samsung": a bundled-appliance placeholder with no code is not an ordered line, because the model it stands for is printed in full on the row below it. Do not deduplicate across orders: if two different PO numbers order the same product or service with the same quantity and price, that line must appear once in EACH order.
 
 4. Copy every value EXACTLY AS PRINTED. Never recalculate, round, convert, reformat or "fix" a number. Write digits with the decimal point as printed and no currency symbol and no thousands separator: printed "1,234.50" is returned as "1234.50" (removing the $ and the comma is not a change of value; changing the digits is).
 
 5. NEVER INVENT A VALUE. If a quantity, unit price or amount is not printed for a line, return an empty string for that field. An empty field is a success - it is flagged for a human. A plausible number you constructed is a failure, because it cannot be told from a real one.
 
-6. SKIP rows that are not ordered items: subtotal, total, tax, generic freight/shipping/handling without an ordered SKU, discount, grand total, and any other summary row. The grand total of an order still belongs in that order's `document_total` - it is just not a line. NEVER skip a coded installation, delivery, recycling or other service/add-on row merely because its description says "install", "installation" or "service"; when it has its own material code and quantity and/or price, return it as a line item.
+6. SKIP rows that are not ordered items: subtotal, total, tax, generic freight/shipping/handling without an ordered SKU, discount, grand total, and any other summary row. Also skip a row whose description is a FIELD LABEL rather than goods - "Requested Delivery Date", "Required Delivery Date", "Delivery terms", "Installation required", "Color scheme", "Elevation" - even when the table gives it a quantity of 1.00 and a 0.00 price. On a work order that first row is the delivery date: the value printed under it ("RDD 11.30.26") is that order's `rdd`, not a product. The grand total of an order still belongs in that order's `document_total` - it is just not a line. NEVER skip a coded installation, delivery, recycling or other service/add-on row merely because its description says "install", "installation" or "service"; when it has its own material code and quantity and/or price, return it as a line item.
 
 7. SKIP a model number that appears only inside ANOTHER item's description or notes ("...includes RF28R7201SR..."). A model named in prose is not an order line.
 
-8. material_code: the ordered line's product OR SERVICE SKU identifier, with no description words and no store/category/vendor prefix. L-INST is a real service-SKU prefix, NOT a category/vendor prefix: preserve the complete printed token including every hyphen, slash and suffix. For example, "DSW- L-INST/E3-DW, Samsung, Dishwasher install" means material_code "L-INST/E3-DW"; "MCR- L-INST/E5-MWO" means "L-INST/E5-MWO"; and "RNG- L-INST/E5-RANE" means "L-INST/E5-RANE". Here DSW-, MCR- and RNG- are category prefixes to omit, while L-INST remains part of the code. Some ITEM ID values instead join a store prefix to the actual Samsung product model. For example, printed ITEM ID "51E-863-RT16A6195SR" means material_code "RT16A6195SR"; "51H-863-RS27T5200SG" means "RS27T5200SG". Keep the complete printed row in source_line, but do not put the "51E-863-" or "51H-863-" prefix in material_code.
+8. material_code: the ordered line's product OR SERVICE SKU identifier, with no description words and no store/category/vendor prefix. L-INST is a real service-SKU prefix, NOT a category/vendor prefix: preserve the complete printed token including every hyphen, slash and suffix. For example, "DSW- L-INST/E3-DW, Samsung, Dishwasher install" means material_code "L-INST/E3-DW"; "MCR- L-INST/E5-MWO" means "L-INST/E5-MWO"; and "RNG- L-INST/E5-RANE" means "L-INST/E5-RANE". Here DSW-, MCR- and RNG- are category prefixes to omit, while L-INST remains part of the code. Some ITEM ID values instead join a store prefix to the actual Samsung product model. For example, printed ITEM ID "51E-863-RT16A6195SR" means material_code "RT16A6195SR"; "51H-863-RS27T5200SG" means "RS27T5200SG". Keep the complete printed row in source_line, but do not put the "51E-863-" or "51H-863-" prefix in material_code. A WORK ORDER usually has NO item column at all - the only place the code appears is the START of the Description cell, followed by the description words. Read it there. Printed "DSW-SSI Samsung DW80CG4021SRAA 53 dBA, Hybrid Tub, Flat Handle, Stainless" means material_code "DW80CG4021SRAA"; "MCR-SSI Samsung ME16A4021AS/AA 1.6 cu ft, 300 cfm, 1,000W, Flat Handle, Stainless" means "ME16A4021AS/AA"; "RNG-SSI Samsung NSI6DG9100SRAA 6.3 cf Induction Slide-In" means "NSI6DG9100SRAA". In these the leading "<prefix>-SSI", the word Samsung and everything after the model are segments to drop, while a suffix that is part of the model ("/AA") is kept. The store prefixes are three-letter category tags - DSW- dishwasher, MCR- microwave, RNG- range, REF- refrigerator, WMT- washer, DRY- dryer, and similar - and they are written both with and without a space after the hyphen ("DSW- L-INST/E3-DW", "DSW-SSI Samsung", "RNG - Included Range"). A CUSTOMER PART NUMBER IS NEVER THE MATERIAL CODE. Some buyers print their own part in a column headed "Item Number" - digits and hyphens only, three groups, like "025-00100-00398" - and the SAMSUNG MODEL in a DIFFERENT column, often headed "VIN", "Model" or "Mfr Part". The material code is the Samsung model, wherever it sits. Printed "1 | 025-00100-00398 | REFER 27CF SIDE-X-SIDE ICE & WATER SS ESTAR | RS27T5201SR/AA | 8 | EA | 1014.0000 | 8,112.00" means material_code "RS27T5201SR/AA", NOT "025-00100-00398". A material code always contains letters; a token of digits and hyphens only is the buyer's own reference, so read the whole row and take the model.
 
-9. quantity: the number of units ordered. unit_price: the price of ONE unit. amount: the line's extended total. If the document prints only ONE money figure for a line, put it in unit_price and leave amount empty - do not multiply it yourself.
+9. quantity: the number of units ordered. unit_price: the price of ONE unit. amount: the line's extended total. If the document prints only ONE money figure for a line, put it in unit_price and leave amount empty - do not multiply it yourself. sales_tax: the figure in that line's OWN tax column, when the table has one ("Sales tax", "Tax"), copied as printed - and an empty string when it has none. On a table with a tax column the printed Amount already INCLUDES the tax, so amount is larger than quantity x unit_price; that is the document being correct, not a mistake, and neither field may be recomputed, netted down or grossed up to make them agree.
 
 10. page: the 1-based page number the row is printed on, as a string. source_line: the row, copied as printed, on one line.
 
-11. po_number: the order number printed in THAT order's header - usually next to "P/O #", "P/O No", "PO Number" or "Order No". document_total: that order's printed grand total. Empty strings when the order prints neither. When the document holds several orders, each entry carries ITS OWN number and ITS OWN total - never the first order's number copied down, and never the sum of the document.
+11. po_number: the order number printed in THAT order's header - usually next to "P/O #", "P/O No", "PO Number", "Order No", "Work order" or "WO #". Copy it exactly as printed, revision suffix included: a work order headed "Work order 182555832-2" gives "182555832-2", not "182555832" and not "182555832-1". WORK ORDER NUMBER: such a page prints TWO numbers - a bare one under the big "Work order" title in the letterhead ("10028814"), and one in the right-hand block beside "Work order date" and "Revision date" ("Work order 182555832-2"). The one in the dated block is the order number; the bare letterhead number is the customer's own job/reference and never goes in po_number. document_total: that order's printed grand total ("Grand total", "Total", "PO Total", "PO Cost"), digits only. Empty strings when the order prints neither. When the document holds several orders, each entry carries ITS OWN number and ITS OWN total - never the first order's number copied down, and never the sum of the document. A CMH / Clayton P.O. prints its number as "PO#: 00952 - 2337110", where "00952" is the buyer's DEPARTMENT - the same block prints it again as "Dept 00952" - and the order number is the part AFTER the dash: "2337110". Never return "00952 - 2337110" and never "00952" as po_number.
 
-12. po_date is the date THAT ORDER was issued - the value next to "PO Date", "P/O Date", "Order Date", "Ordered" or "Date" in that order's header. rdd is the date the customer wants the goods DELIVERED, printed as "Required Date", "Required Delivery Date", "RDD", "ETA Date", "Requested Delivery", "Delivery Date" or "Delivery On". Return both as YYYY-MM-DD, converting the printed format without changing the day: a document printing "10/14/26" gives "2026-10-14"; one printing "14-Oct-2026" gives "2026-10-14". These are two DIFFERENT dates - never copy one into the other, and return an empty string rather than guessing. Orders in the same document routinely print different delivery dates; keep each with its own order.
+12. po_date is the date THAT ORDER was issued - the value next to "PO Date", "P/O Date", "Order Date", "Ordered" or "Date" in that order's header. rdd is the date the customer wants the goods DELIVERED, printed as "Required Date", "Required Delivery Date", "RDD", "ETA Date", "Requested Delivery", "Delivery Date", "Delivery On" or "Date Needed". A WORK ORDER often prints it nowhere in the header: it is the first row of the items table, "1. Requested Delivery Date", with the value on the line underneath as "RDD 11.30.26". That value is this order's rdd (and that row is not a line - rule 6). Return both as YYYY-MM-DD, converting the printed format without changing the day: a document printing "10/14/26" gives "2026-10-14"; one printing "11.30.26" gives "2026-11-30" (a dotted date is month.day.year); one printing "14-Oct-2026" gives "2026-10-14". These are two DIFFERENT dates - never copy one into the other, and return an empty string rather than guessing. Orders in the same document routinely print different delivery dates; keep each with its own order.
 
-13. ship_to is THAT ORDER's DELIVERY address: the block labelled "Ship To", "Deliver To", "Ship-To" or "Consignee". Not the bill-to block, not the seller's address, not the customer's head office. Put the street lines in address_lines in the order printed (at most 5) and the city / state / postcode in their own fields. Return empty strings for anything the order does not print. A "SHIP TO: 4444-46 AYERS AVE VERNON CA 90058" line is street "4444-46 AYERS AVE", city "VERNON", state "CA", postal code "90058".
+13. ship_to is THAT ORDER's DELIVERY address: the block labelled "Ship To", "Deliver To", "Ship-To" or "Consignee". Not the bill-to block, not the seller's address, not the customer's head office. A WORK ORDER prints no such label - its delivery address is the block printed under the "Work order" heading: the street line, then "City, ST ZIP", then the country. The line above the street naming the community, phase and lot ("Parkside II - Edgewood at Peach Avenue/6379/069") is the JOB, not a street: it does not go in address_lines and it is not the city. So "Parkside II - Edgewood at Peach Avenue/6379/069 / 5126 E. Atchison Street / Fresno, CA 93725-1202" means street "5126 E. Atchison Street", city "Fresno", state "CA", postal code "93725-1202". A CMH / Clayton P.O. labels this block "Ship To" and starts it with the SITE NAME on a line of its own: "Clayton Athens / 3429 State Highway 31 - West / Athens, TX 75751" means name "Clayton Athens", street "3429 State Highway 31 - West" (keep the "- West"), city "Athens", state "TX", postal code "75751". Put the street lines in address_lines in the order printed (at most 5) and the city / state / postcode in their own fields. Return empty strings for anything the order does not print. A "SHIP TO: 4444-46 AYERS AVE VERNON CA 90058" line is street "4444-46 AYERS AVE", city "VERNON", state "CA", postal code "90058".
 
 14. When several orders share one buyer block, that block is NOT an order - it is the document's letterhead. The number of entries in `orders` is decided by the number of distinct order numbers, not by the number of addresses or the number of pages."""
 
 _USER_PDF = ("Read every labelled PDF page before extracting. First inventory "
-             "the explicit P/O number on each page, then return every distinct "
-             "order with only that order's line items. Finally verify that the "
+             "the explicit order number on each page - a P/O number, an Order "
+             "No, or a Work order number - then return every distinct order "
+             "with only that order's line items. Finally verify that the "
              "number of returned orders equals the number of distinct explicit "
-             "P/O numbers in the page inventory.")
-_USER_TEXT = ("Below is the text of a purchase order document recovered from a "
-              "protected file, so there are no page coordinates and the "
-              "columns may have run together. It may hold more than one "
-              "order. Read it and return every order it contains with its "
-              "ordered line items.\n\n<po_text>\n%s\n</po_text>")
+             "order numbers in the page inventory. This document may be a "
+             "builder WORK ORDER rather than a Samsung PO: it then has no item "
+             "column, so each code is the first token of the Description cell "
+             "(\"DSW- L-INST/E3-DW\" -> \"L-INST/E3-DW\", \"DSW-SSI Samsung "
+             "DW80CG4021SRAA\" -> \"DW80CG4021SRAA\"), its \"<prefix>- "
+             "Included <appliance>\" rows are bundled-appliance placeholders "
+             "and not lines, and its delivery address sits unlabelled under "
+             "the Work order heading. A builder PURCHASE ORDER can hide the "
+             "code too: when a column headed \"Item Number\" holds a "
+             "digits-and-hyphens part (025-00100-00398) and a column headed "
+             "\"VIN\" holds the Samsung model, the model is the material code.")
+_USER_TEXT = ("Below is the text of a purchase order or builder work order "
+              "recovered from a protected file, so there are no page "
+              "coordinates and the columns may have run together. It may hold "
+              "more than one order. Read it and return every order it "
+              "contains with its ordered line items.\n\n<po_text>\n%s\n"
+              "</po_text>")
 
 
 def _plain_error(code: int, detail: str, url: str) -> str:
@@ -664,22 +695,53 @@ def test_connection(cfg: dict = None, base_url_override: str = "",
 
 
 def _call(content_blocks: list, cfg: dict) -> dict:
-    """One extraction call. Returns the tool input (the line items)."""
-    payload = {
-        "model": cfg.get("model", DEFAULTS["model"]),
-        "max_tokens": int(cfg.get("max_tokens", DEFAULTS["max_tokens"])),
-        "system": _SYSTEM,
-        "tools": [_TOOL],
-        # Forced: the answer must be the structured line items, not prose
-        # about them. Getting JSON back is what makes the gate below possible.
-        "tool_choice": {"type": "tool", "name": _TOOL["name"]},
-        "messages": [{"role": "user", "content": content_blocks}],
-    }
-    data = _post(payload, cfg)
-    for block in data.get("content") or []:
-        if block.get("type") == "tool_use":
-            return block.get("input") or {}
-    raise RuntimeError("the Claude API returned no line items")
+    """One extraction call. Returns the tool input (the line items).
+
+    The OUTPUT budget has to fit the DOCUMENT, not the model: every line costs
+    roughly 100 tokens (nine fields, `source_line` being most of it), so a
+    four-order scan of 88 lines needs ~9,000 and an 8,000 ceiling cut the answer
+    off mid-JSON. A truncated `tool_use` block arrives with an EMPTY `input`,
+    which looks exactly like "this document held no line items" - that is how a
+    perfectly readable 4-PO PDF came back as "No material codes found"
+    (2026-10-29). So `stop_reason` is read rather than assumed, and a cut-off
+    answer is retried once with double the room instead of being reported as an
+    empty document.
+    """
+    budget = int(cfg.get("max_tokens", DEFAULTS["max_tokens"]))
+    ceiling = int(cfg.get("max_tokens_ceiling", DEFAULTS["max_tokens_ceiling"]))
+    while True:
+        payload = {
+            "model": cfg.get("model", DEFAULTS["model"]),
+            "max_tokens": budget,
+            "system": _SYSTEM,
+            "tools": [_TOOL],
+            # Forced: the answer must be the structured line items, not prose
+            # about them. Getting JSON back is what makes the gate below
+            # possible.
+            "tool_choice": {"type": "tool", "name": _TOOL["name"]},
+            "messages": [{"role": "user", "content": content_blocks}],
+        }
+        data = _post(payload, cfg)
+        for block in data.get("content") or []:
+            if block.get("type") == "tool_use" and (block.get("input") or {}):
+                return block.get("input") or {}
+        stop = str(data.get("stop_reason") or "")
+        used = (data.get("usage") or {}).get("output_tokens")
+        if stop == "max_tokens":
+            if budget < ceiling:
+                budget = min(ceiling, budget * 2)
+                continue
+            raise RuntimeError(
+                "the reading was cut off - the answer needed more than "
+                f"{budget} output tokens"
+                + (f" (used {used})" if used else "") +
+                ". Split the document, or raise max_tokens_ceiling in "
+                "CodeExtract/claude_config.json.")
+        # No tool_use block and no truncation: the endpoint answered, but with
+        # nothing this program can use (prose, an empty list, a refusal). That
+        # is a reading with zero lines - which the caller already reports as
+        # "nothing found" - and not a reason to throw away the document.
+        return {}
 
 
 def _pdf_blocks(path: str, cfg: dict) -> list:
@@ -742,6 +804,41 @@ def _tolerance(amount: float) -> float:
 # ──────────────────────────────────────────────
 # The accuracy gate
 # ──────────────────────────────────────────────
+_MODEL_TOKEN = re.compile(r"[A-Za-z0-9/]+")
+
+
+def _master_codes_in(text: str, backbone) -> list:
+    """The DISTINCT material codes the row itself prints.
+
+    Some buyers do not put the Samsung model where a column title suggests.
+    CMH/Clayton prints the builder's own part in `Item Number`
+    (`025-00100-00398`) and the SAMSUNG MODEL in a column headed `VIN`
+    (`RS27T5201SR/AA`). A reader that answers with the column called "Item
+    Number" is not lying - it is answering the question the table looks like it
+    asks - so the gate has to be able to find the model the row really carries.
+
+    Recognition, not inference: a token is only returned when it independently
+    exists in the Material Code master. Two different master codes in one row
+    means the row does not say which one is the order, and the caller must
+    decline rather than pick.
+    """
+    found = []
+    for token in _MODEL_TOKEN.findall(text or ""):
+        # A Samsung model has letters AND digits and is at least 6 characters;
+        # that excludes "025", "00398", "24", "1000W" and the plain words of a
+        # description, so a builder part number can never come back.
+        if len(token) < 6:
+            continue
+        if not any(c.isdigit() for c in token):
+            continue
+        if not any(c.isalpha() for c in token):
+            continue
+        code, _kind = backbone.lookup(token)
+        if code and code not in found:
+            found.append(code)
+    return found
+
+
 def apply_gate(records: list, backbone: BackboneIndex,
                source_file: str = "", po_number: str = "") -> tuple:
     """Master data decides which codes are PUBLISHED - not which are shown.
@@ -817,6 +914,20 @@ def apply_gate(records: list, backbone: BackboneIndex,
                     r["raw_material_code"] = raw
                     break
         if not code:
+            # Last resort, and the only one that looks OUTSIDE the column the
+            # code was read from: a customer part number is not a material
+            # code (2026-11-03). If the row itself prints exactly one code the
+            # master knows - the Samsung model in CMH's "VIN" column, say - and
+            # the answer we got is not in the master, take the row's own code
+            # and keep the printed one for audit. Two candidates, or none:
+            # stay in review, because the row then does not say which is the
+            # order.
+            alt = _master_codes_in(r.get("source_line") or "", backbone)
+            if len(alt) == 1 and alt[0] != code:
+                r["raw_material_code"] = raw
+                code, kind = alt[0], "recovered_row"
+                matched_input = alt[0]
+        if not code:
             r["needs_review"] = True
             r["match_type"] = "unconfirmed"
             r["review_reason"] = "not in the Material Code list"
@@ -842,25 +953,46 @@ def check_arithmetic(records: list, document_total: str) -> list:
     It only ever REPORTS. The 2026-10 decision stands: a value is published as
     printed and the operator corrects it. A derived price that is wrong is
     worse than a price that is visibly missing.
+
+    2026-11-02: a builder work order prints a per-line SALES TAX column and an
+    Amount that already includes it, so `qty x price` is legitimately smaller
+    than the printed amount on every appliance line. Comparing them alone
+    produced four alarms on a perfectly read work order - and an alarm that
+    fires on a good document is how the real one gets ignored. The printed tax
+    is therefore part of the comparison, and the total is compared against the
+    printed AMOUNTS where the document prints them (they are, by definition,
+    what the printed total sums).
     """
     diags = []
-    total = 0.0
+    price_total = 0.0      # sum of qty x price (+ printed tax)
+    amount_total = 0.0     # sum of the printed Amount column
     checked = 0
+    any_amount = False
+    every_line_has_amount = True
     for r in records:
         q, p, a = (_num(r.get("quantity")), _num(r.get("unit_price")),
                    _num(r.get("amount")))
+        tax = _num(r.get("sales_tax")) or 0.0    # None when the line has none
         if q and p:
-            total += q * p
+            price_total += q * p + tax
+        if a:
+            amount_total += a
+            any_amount = True
+        else:
+            every_line_has_amount = False
         if not (q and p and a):
             continue
         checked += 1
-        if abs(q * p - a) > _tolerance(a):
+        if abs(q * p + tax - a) > _tolerance(a):
             label = r.get("po_line") or r.get("material_code") or "?"
             diags.append(
                 f"line {label} ({r.get('material_code')}): "
-                f"{q:g} x {p:g} = {q * p:.2f} but the document printed "
+                f"{q:g} x {p:g}"
+                + (f" + {tax:g} tax" if tax else "")
+                + f" = {q * p + tax:.2f} but the document printed "
                 f"{a:.2f}. Both are published as printed - check this line.")
     dt = _num(document_total)
+    total = amount_total if (any_amount and every_line_has_amount) else price_total
     if dt and checked:
         if abs(total - dt) > _tolerance(dt):
             diags.append(
@@ -946,6 +1078,11 @@ def _records_from(payload: dict, source_file: str, po_number: str) -> list:
             "unit": str(ln.get("unit") or "").strip(),
             "unit_price": _clean_num(ln.get("unit_price")),
             "amount": _clean_num(ln.get("amount")),
+            # Printed tax for THIS line, when the table has a tax column. It
+            # is not published anywhere - the ERP form has no tax column - but
+            # it is what makes `qty x price == amount` true on the documents
+            # that print a tax-inclusive Amount (2026-11-02).
+            "sales_tax": _clean_num(ln.get("sales_tax")),
             "po_line": str(ln.get("po_line") or "").strip(),
             "po_number": po_number,
             "page": page,
@@ -966,7 +1103,16 @@ def _records_from(payload: dict, source_file: str, po_number: str) -> list:
 _DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%m/%d/%y", "%d/%m/%Y",
                  "%m-%d-%Y", "%m-%d-%y", "%Y%m%d", "%d-%b-%Y", "%d %b %Y",
                  "%b %d, %Y", "%b %d %Y", "%d-%B-%Y", "%B %d, %Y",
-                 "%d %B %Y", "%B %d %Y")
+                 "%d %B %Y", "%B %d %Y",
+                 # Dotted dates. Builder work orders print the RDD as
+                 # "11.30.26" under the "Requested Delivery Date" row, and
+                 # without these the date was UNREADABLE - so the R.D.D
+                 # silently fell back to "PO date + 6 working days", which
+                 # looks like a read date and is not one (2026-11-02).
+                 # Month first, because every customer on this desk is US;
+                 # "%d.%m.%y" still catches "30.11.26", where month-first
+                 # cannot parse. An ambiguous "05.06.26" stays month-first.
+                 "%m.%d.%Y", "%m.%d.%y", "%d.%m.%Y", "%d.%m.%y", "%Y.%m.%d")
 
 
 def _as_date(value) -> str:
@@ -1003,6 +1149,19 @@ def _as_date(value) -> str:
             return datetime(y, int(mo.group(1)), int(mo.group(2))).date().isoformat()
         except ValueError:
             pass
+    # ...and the dotted form, guarded so a long code ("18.25.55832") cannot be
+    # mistaken for one: the year must be a whole group, not the head of a
+    # longer number.
+    mo = re.search(r"(?<![\d.])(\d{1,2})\.(\d{1,2})\.(\d{2,4})(?![\d.])", s)
+    if mo:
+        y = int(mo.group(3))
+        y = y + 2000 if y < 100 else y
+        for a, b in ((1, 2), (2, 1)):        # month-day first, then day-month
+            try:
+                return datetime(y, int(mo.group(a)),
+                                int(mo.group(b))).date().isoformat()
+            except ValueError:
+                continue
     return ""
 
 

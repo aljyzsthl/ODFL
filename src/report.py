@@ -1260,12 +1260,19 @@ PAGE = """<!DOCTYPE html>
   .rlrow:last-child { border-bottom:none; }
   .rlmain { display:grid; align-items:center; gap:12px; padding:11px 18px;
     cursor:pointer; grid-template-columns:
-      14px minmax(0,1fr) 150px 132px 116px 210px; }
+      14px minmax(0,0.8fr) minmax(0,1.3fr) 118px 108px 262px; }
   .rlmain:hover { background:#f8fafc; }
+  .rldoc { min-width:0; }
+  /* The mail's subject, the column that says WHICH email a reading came from.
+     A four-PO mail is four rows here, and without it they all read as the same
+     document. */
+  .rlsubj { font-size:12.5px; color:#334155; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; }
   .rlcar { color:#94a3b8; font-size:9px; transition:transform .18s ease; }
   .rlrow.open .rlcar { transform:rotate(90deg); }
   .rlfname { font-weight:600; font-size:13px; overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; }
+  .rlfname.mono { font-family:Consolas,'Courier New',monospace; font-size:12.5px; }
   .rlmeta { font-size:11.5px; color:var(--muted); margin-top:2px;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .rlcell { font-size:12.5px; color:#475569; overflow:hidden;
@@ -1298,7 +1305,7 @@ PAGE = """<!DOCTYPE html>
       inset 0 1px 0 #fff;
     transition:transform .4s cubic-bezier(.68,-.35,.27,1.35),
       width .32s cubic-bezier(.4,0,.2,1),
-      box-shadow .25s ease; }
+      box-shadow .25s ease, opacity .18s ease; }
   .seg:has(.segopt:last-child input:checked) .segthumb {
     transform:translateX(100%); }
   /* Both halves ticked (2026-10-27): the thumb stretches across the whole
@@ -1313,6 +1320,12 @@ PAGE = """<!DOCTYPE html>
     transform:none; width:calc(100% - 6px); }
   .seg:hover .segthumb { box-shadow:0 2px 4px rgba(15,23,42,.12),
     0 5px 12px rgba(15,23,42,.08), inset 0 1px 0 #fff; }
+  /* NOTHING TICKED (2026-11-02): a Read row is allowed to be in this state, and
+     it must not look like "Full is selected" - an empty track with no thumb,
+     grey labels. Generate refuses (see readOutput) instead of writing the
+     default behind the user's back. */
+  .seg:not(:has(.segopt input:checked)) .segthumb { opacity:0; }
+  .seg:not(:has(.segopt input:checked)) .seglab { color:#94a3b8; }
   .segopt { position:relative; flex:1 1 0; display:flex; }
   /* Out of the flow but still in the tab order: the radio is the control, the
      label is only its skin. */
@@ -1329,6 +1342,45 @@ PAGE = """<!DOCTYPE html>
   /* Verbatim width: the label becomes "Writing…" while the file is written, and
      a button that grew would shove the switch beside it sideways. */
   .genbtn { width:76px; padding:4px 0; }
+  /* Redo = "send this order back one step". Quiet until hovered: it sits
+     beside the button that finishes the job, and it must not compete with it. */
+  .redo { padding:4px 9px; color:#92400e; border-color:#fde68a;
+    background:#fffbeb; }
+  .redo:hover { background:#fef3c7; border-color:#fcd34d; color:#78350f; }
+  .redo.working { opacity:.6; }
+  /* ── Output list (Inbox tab 3) ────────────────────────────────────────────
+     Deliberately the same row language as the Read list, one row per written
+     order: subject, PO, R.D.D, then the download(s) and Redo. No banner above
+     it and no nine-column table - the download belongs on the row it belongs
+     to, and the full table is still on the Completed screen. */
+  .outrow { border-bottom:1px solid #f1f5f9; }
+  .outrow:last-child { border-bottom:none; }
+  .outrow:hover { background:#f8fafc; }
+  .outrow.fresh { background:#f0fdf4; }
+  .outrow.fresh:hover { background:#ecfdf5; }
+  /* The 14px first column is the caret the Read rows have. Output rows do not
+     expand, but keeping the slot means the two tabs line up instead of the
+     whole list jumping 26px left when you switch. */
+  .omain { display:grid; align-items:center; gap:12px; padding:11px 18px;
+    /* The ACTIONS column takes the slack (right-aligned), so the PO and the
+       R.D.D stay next to the subject instead of drifting to the far edge. */
+    grid-template-columns:14px minmax(0,1.6fr) 190px 104px minmax(200px,1fr); }
+  .outacts { display:flex; gap:6px; justify-content:flex-end;
+    align-items:center; }
+  .btn.sm.dl { color:#166534; border-color:#bbf7d0; background:#f0fdf4; }
+  .btn.sm.dl:hover { background:#dcfce7; border-color:#86efac; }
+  /* A reading that failed, kept on screen instead of flashing past in an alert
+     (2026-11-03). `pre-wrap` because the server's messages are multi-line
+     ("The attachment file is not on this PC:\n  a.pdf"). */
+  .readfail { border:1px solid #fecaca; background:#fef2f2;
+    border-radius:var(--radius); padding:13px 16px; margin-bottom:14px; }
+  .readfail .rfh { font-weight:700; font-size:13px; color:#991b1b;
+    margin-bottom:5px; }
+  .readfail .rfb { font-size:12.5px; color:#7f1d1d; white-space:pre-wrap;
+    word-break:break-word; line-height:1.55; }
+  .readfail .rfn { font-size:12px; color:#92400e; margin-top:8px; }
+  .readfail .rfacts { display:flex; gap:8px; align-items:center;
+    margin-top:10px; }
   /* Extraction has no percentage to report. Keep the Read list fixed and put
      this compact, indeterminate waveform exactly where Generate will appear
      when the saved reading is ready. */
@@ -1762,24 +1814,62 @@ async function setErpFmts(list){
 //
 // `name` only has to be unique per switch, because each one is its own form;
 // nothing is submitted, the onchange handler is the whole wiring.
-function fmtSeg(name, extra){
+//
+// `o.on` / `o.fn` let a switch show and record something other than the desk
+// setting - the Read rows do (see `ROWFMT`), because two orders can legitimately
+// be written in different versions.
+function fmtSeg(name, extra, o){
+  o = o || {};
+  const on = o.on || fmtOn;
+  const fn = o.fn || 'toggleErpFmt';
   let h = '<div class="seg"'+(extra || '')+
     ' onclick="event.stopPropagation()">'+
     '<span class="segthumb"></span>';
   FMT_ORDER.forEach(f => {
     h += '<label class="segopt" title="'+esc(FMT_TITLE[f]||'')+'">'+
       '<input type="checkbox" name="'+esc(name)+'" value="'+f+'" '+
-        'data-fmt="'+f+'"'+(fmtOn(f) ? ' checked' : '')+
-        ' onchange="toggleErpFmt(this.dataset.fmt, this)">'+
+        'data-fmt="'+f+'"'+(on(f) ? ' checked' : '')+
+        ' onchange="'+fn+'(this.dataset.fmt, this)">'+
       '<span class="seglab">'+esc(FMT_LABEL[f].replace(' form', ''))+
       '</span></label>';
   });
   return h + '</div>';
 }
 
-// Tick / untick one version. The LAST ticked one cannot be unticked: an empty
-// choice has no file to write, and silently falling back to "full" would mean
-// the next Confirm produced something the switch says is not selected.
+// ── The version switch on a Read row is PER ROW (2026-11-02) ───────────────
+// It used to read and write the desk-wide setting: ticking Simple on one order
+// saved that setting, re-rendered the page from it, and every other row came
+// back showing Simple too - so no two orders could be written in different
+// versions. `ROWFMT` is what THIS row chose; until it is touched the row shows
+// the desk default. Nothing is saved from here: a per-order choice is not a
+// preference, and Settings / Quick Convert own the default.
+let ROWFMT = {};     // "mailId:index" -> ['full'] / ['simple'] / both / []
+
+function rowFmts(k){
+  const cur = ROWFMT[k];
+  return cur ? cur.slice() : erpFmts();
+}
+
+function fmtOnRow(k, f){ return rowFmts(k).indexOf(f) >= 0; }
+
+function toggleRowFmt(f, el){
+  const k = String((el && el.name) || '').replace(/^fmt-/, '');
+  const cur = rowFmts(k);
+  const i = cur.indexOf(f);
+  if (i >= 0) cur.splice(i, 1);
+  else cur.push(f);
+  // Normalised against FMT_ORDER, so 'full' is always first whatever order the
+  // boxes were ticked in. An EMPTY list is allowed and means "nothing chosen":
+  // Generate refuses with a toast rather than quietly writing the default.
+  ROWFMT[k] = FMT_ORDER.filter(x => cur.indexOf(x) >= 0);
+  // No render(): the thumb follows :checked in CSS, and a full repaint would
+  // drop the row's expand state and its caret.
+}
+
+// Tick / untick one version of the DESK DEFAULT (Quick Convert, Settings).
+// Here the last ticked one cannot be unticked: this value is saved and is what
+// every untouched Read row starts from, and an empty stored default has no file
+// to write.
 async function toggleErpFmt(f, el){
   const cur = erpFmts();
   const on = el ? !!el.checked : cur.indexOf(f) < 0;
@@ -1789,7 +1879,10 @@ async function toggleErpFmt(f, el){
   } else {
     if (cur.length === 1){
       if (el) el.checked = true;      // undo the tick the browser just made
-      toast('Keep at least one version selected', true);
+      // Not sticky: this explains one click and then goes away. It used to be
+      // `toast(..., true)`, which meant a spinner sat at the bottom of the page
+      // until something called hideToast() - and nothing did.
+      toast('Keep at least one version selected');
       return;
     }
     next = cur.filter(x => x !== f);
@@ -2735,21 +2828,33 @@ async function startReading(id, index){
   const seq = ++PREVIEW_SEQ;
   READING = {id: id, index: readIndex, source: source || null};
   PREVIEW = null;
-  LASTFILES = null;              // a new order: the last banner is history
+  LASTFILES = null;              // a new order: nothing to show from the last one
   // Move to the Read tab BEFORE the request: the panel it shows is the honest
   // answer to "what is happening", and the reading is what that tab is about.
   ITAB = 2;
   MAILPAGE = 0;
   render();
   loadReads();
-  const r = await api('/api/order_preview', body);
+  // The request itself can throw (the local server went away mid-click). Without
+  // this the synthetic row kept its waveform forever AND the order stayed out
+  // of the Inbox, because `READING` is what hides it there (2026-11-03).
+  let r;
+  try {
+    r = await api('/api/order_preview', body);
+  } catch (e) {
+    r = {error: 'Could not reach OrderFlow: ' +
+      (e && e.message ? e.message : e)};
+  }
   // The user walked away (Cancel, another row, another tab) while this was in
   // flight: the answer is for a PO they are no longer looking at, so drop it.
   if (seq !== PREVIEW_SEQ) return;
   if (r.error){
+    // Nothing was cached, so the synthetic row is gone and the order is back in
+    // the Inbox. Say WHY, and leave it said: the alert that used to carry this
+    // disappeared with the click that dismissed it.
     READING = null;
-    alert(r.error);
-    render();               // back to the register, nothing left in flight
+    READFAIL = r.error;
+    render();
     return;
   }
   // A list request may already have been in flight when extraction started and
@@ -2759,6 +2864,7 @@ async function startReading(id, index){
   if (seq !== PREVIEW_SEQ) return;
   READING = null;
   PREVIEW = null;
+  READFAIL = '';                  // it worked: the last failure is history
   render();
 }
 
@@ -2914,7 +3020,7 @@ function togglePreviewFmt(f){
   const cur = previewFmts();
   if (cur.indexOf(f) >= 0){
     if (cur.length === 1){
-      toast('Keep at least one version selected', true);
+      toast('Keep at least one version selected');
       return;
     }
     PREVIEW.fmts = cur.filter(x => x !== f);
@@ -3426,6 +3532,13 @@ let READROWS = null;    // the register from /api/read_list, or null if not load
 let READLOAD = false;   // a request is in flight
 let READPROMISE = null; // lets a post-extraction refresh queue behind a list load
 let READERR = '';       // why the register could not be fetched, if it could not
+// Why the last reading FAILED. Kept on screen (2026-11-03): the extraction used
+// to `alert()` and then put the row back in the Inbox, so by the time the alert
+// was dismissed there was no evidence left of what went wrong - and on a machine
+// that had just been moved, "it goes to Read and comes back" was the whole
+// report. Nothing was cached, so the row returning to the Inbox is correct;
+// what was missing was the reason.
+let READFAIL = '';
 let READQ = '';         // free-text filter on the read list
 let READOPEN = {};      // which rows are expanded
 let READSKU = {};       // second-level disclosure inside an expanded Read row
@@ -3440,8 +3553,12 @@ function dayOrders(){
 
 function inboxTabs(){
   const day = dayOrders();
-  const n1 = day.filter(m => m.status !== 'Done').length;
-  const n3 = day.filter(m => m.status === 'Done').length;
+  // "Inbox" means NOT READ YET: a document that has been read is on the Read
+  // tab, and the two lists must not both claim it (2026-11-02). Output is the
+  // register of written orders, so its count is that register's size.
+  const seen = readKeys();
+  const n1 = day.filter(m => m.status !== 'Done' && !isRead(m, seen)).length;
+  const n3 = outRows().length;
   const n2 = (READROWS || READING) ? readListRows().length : null;
   const items = [[1, 'Inbox', n1], [2, 'Read', n2], [3, 'Output', n3]];
   return '<div class="tabs" id="itabs" style="--i:'+(ITAB-1)+'">'+
@@ -3467,6 +3584,7 @@ function setInboxTab(n){
   const prev = ITAB;
   ITAB = n;
   MAILPAGE = 0;
+  if (n !== 3) OUTFRESH = '';   // the green tint belongs to that one arrival
   render();
   const bar = document.getElementById('itabs');
   if (bar){
@@ -3502,26 +3620,22 @@ function datePick(){
 
 function renderToday(){
   // Three tabs, one pipeline. Read is always the same compact register, even
-  // while one of its rows is being extracted.
+  // while one of its rows is being extracted; Output is the same register with
+  // the written rows in it (2026-11-02).
   if (ITAB === 2) return inboxTabs() + readPanel();
-  if (ITAB === 3)
-    return inboxTabs() + (LASTFILES ? outBanner() : '') +
-      inboxDateBar() + renderCompleted();
+  if (ITAB === 3) return inboxTabs() + outPanel();
   return inboxList();
-}
-
-function inboxDateBar(){
-  return '<div class="filterbar"><div class="fleft">'+datePick()+
-    '</div><div class="fleft"><span class="muted">'+
-    fmtDate(SELDATE)+'</span></div></div>';
 }
 
 function inboxList(){
   // Split into individual order rows when there are multiple attachments (each Confirmed/extracted separately)
   const dayAll = expandOrders(DATA.history.filter(
     m => (m.received_at||'').slice(0,10) === SELDATE));
-  // Unprocessed only: Done moves to Completed / Not yet, Pending, Rejected are kept
-  let mails = dayAll.filter(m => m.status !== 'Done');
+  // Unprocessed only: Done moves to Completed / Not yet, Pending, Rejected are
+  // kept. Extract moves a row to the READ tab, so a document that already has a
+  // reading is not "to process" any more - it left this list when it was read.
+  const seen = readKeys();
+  let mails = dayAll.filter(m => m.status !== 'Done' && !isRead(m, seen));
 
   const names = [...new Set(dayAll.map(dispName))].sort();
   if (CUSTPICK.length)
@@ -3549,7 +3663,7 @@ function inboxList(){
   // ── Summary for the day (aggregated on the same date so totals add up) ──
   const onDay = a => expandOrders((a||[]).filter(
     m => (m.received_at||'').slice(0,10) === SELDATE)).length;
-  const nProc = dayAll.filter(m => m.status !== 'Done').length;
+  const nProc = dayAll.filter(m => m.status !== 'Done' && !isRead(m, seen)).length;
   const nDone = dayAll.filter(m => m.status === 'Done').length;
   const nNot  = onDay(DATA.excluded);
   // Cancellation-flagged mail is no longer parked on a screen of its own, so
@@ -3688,6 +3802,34 @@ function inboxList(){
 // has to interpolate a string into an attribute (which is how a quote in a file
 // name becomes a syntax error inside PAGE, a Python string with its own idea of
 // escaping).
+
+// The index the server files THIS row's document under. A mail with several
+// order documents is split per attachment and carries `att_index`; a
+// single-document mail is the mail itself, and the stored index comes off
+// att_docs. Both have to agree with /api/read_list, or a read order stays in
+// the Inbox forever (2026-11-02).
+function rowAttIndex(m){
+  if (m.att_index !== undefined && m.att_index !== null) return +m.att_index;
+  const d = (m.att_docs || [])[0] || {};
+  return d.i !== undefined ? +d.i : 0;
+}
+
+// Every order document that has a reading - the Read tab's contents, as keys.
+// The Inbox is "not read yet", so this is what it subtracts: a document in both
+// lists looks processable, and pressing Extract again pays for the same reading
+// twice. The in-flight one counts too, or the row would stay put for the whole
+// extraction instead of moving the moment it was asked for.
+function readKeys(){
+  const set = {};
+  (READROWS || []).forEach(r => { set[r.id + ':' + r.index] = true; });
+  if (READING) set[READING.id + ':' + READING.index] = true;
+  return set;
+}
+
+function isRead(m, set){
+  return !!(set || readKeys())[m.id + ':' + rowAttIndex(m)];
+}
+
 function loadReads(force){
   if (READLOAD){
     // Extraction may finish while the initial list request is still returning
@@ -3701,13 +3843,16 @@ function loadReads(force){
     READLOAD = false;
     READERR = (r && r.error) || '';
     READROWS = (r && r.rows) || [];
-    if (TAB === 'today' && ITAB === 2) render();
+    // The Inbox filters on this register too, so a list arriving after the
+    // first paint has to redraw the Inbox - otherwise the orders that were
+    // just read sit there until the next click.
+    if (TAB === 'today' && (ITAB === 1 || ITAB === 2)) render();
   }).catch(function(){
     READLOAD = false;
     READERR = 'The server did not answer. Nothing has been lost - reload the '+
       'page to try again.';
     if (READROWS === null) READROWS = [];
-    if (TAB === 'today' && ITAB === 2) render();
+    if (TAB === 'today' && (ITAB === 1 || ITAB === 2)) render();
   });
   return READPROMISE;
 }
@@ -3722,6 +3867,7 @@ function pendingReadRow(){
   return {
     id: READING.id, index: READING.index, name: name,
     ext: dot >= 0 ? name.slice(dot + 1) : 'pdf',
+    subject: m.subject || '',
     customer: m.customer || '', sold_to: m.sold_to || '',
     ship_to: m.ship_to || '',
     sold_to_name: m.sold_to_name || '', po_number: m.po_number || '',
@@ -3778,12 +3924,17 @@ function readRowHTML(r){
   const cls = ext === 'pdf' ? 'pdf'
             : (ext === 'xlsx' || ext === 'xls' ? 'xls' : '');
   const who = r.sold_to_name || r.sold_to || '';
+  const subj = r.subject || '';
+  // The type chip moved INTO the file-name cell: its own column cost 150px and
+  // said what the extension already says. The subject took the room.
   return '<div class="rlrow'+(open ? ' open' : '')+
       (r.reading ? ' readingrow' : '')+'" data-key="'+k+'">'+
     '<div class="rlmain"'+(r.reading ? '' : ' onclick="toggleRead(this)"')+'>'+
       '<span class="rlcar">&#9654;</span>'+
-      '<div style="min-width:0">'+
-        '<div class="rlfname" title="'+esc(r.name)+'">'+esc(r.name)+'</div>'+
+      '<div class="rldoc">'+
+        '<div class="rlfname" title="'+esc(r.name)+'">'+
+          '<span class="ftype '+cls+'" style="margin-right:7px">'+
+            esc(ext.toUpperCase())+'</span>'+esc(r.name)+'</div>'+
         '<div class="rlmeta">'+esc(r.customer || '(unknown customer)')+
           (r.po_count > 1
             ? ' &middot; <b>'+r.po_count+' POs</b>'
@@ -3793,22 +3944,29 @@ function readRowHTML(r){
             ' to review</span>' : '')+
         '</div>'+
       '</div>'+
-      '<div class="rlcell"><span class="ftype '+cls+'">'+
-        esc(ext.toUpperCase())+'</span></div>'+
-      '<div class="rlcell" title="'+esc(who)+'">'+(who ? esc(who) : '—')+
+      '<div class="rlsubj" title="'+esc(subj)+'">'+
+        (subj ? esc(subj) : '<span class="muted">&mdash;</span>')+'</div>'+
+      '<div class="rlcell" title="'+esc(who)+'">'+(who ? esc(who) : '&mdash;')+
         '</div>'+
       '<div class="rlcell">'+fmtDT(r.read_at)+'</div>'+
-      '<div class="rlacts">'+fmtSeg('fmt-'+k)+
+      '<div class="rlacts">'+
       (r.reading
         ? '<ul class="wave-menu" role="status" aria-label="Reading the PO" '+
             'title="Reading the PO…">'+
             '<li></li><li></li><li></li><li></li><li></li><li></li>'+
             '<li></li><li></li><li></li></ul>'
-        : '<button class="btn sm primary genbtn" '+
+        : fmtSeg('fmt-'+k, '', {
+            on: function(f){ return fmtOnRow(k, f); }, fn: 'toggleRowFmt' })+
+          '<button class="btn sm primary genbtn" '+
             'title="Write the Order Upload in the version(s) chosen beside it: '+
             'one file per ticked version" '+
             'onclick="event.stopPropagation();readOutput(this)">Generate'+
-          '</button>')+'</div>'+
+          '</button>'+
+          '<button class="btn sm redo" '+
+            'title="Redo — send this PO back to the Inbox. The saved reading '+
+            'is deleted, so it will be read again (one API call) next time." '+
+            'onclick="event.stopPropagation();readRedo(this)">Redo</button>')+
+      '</div>'+
     '</div>'+
     (open ? '<div class="rldetail" data-detail="'+k+'">'+
       readDetailBody(k)+'</div>' : '')+
@@ -4032,6 +4190,11 @@ function setReadQ(v){
   }, 160);
 }
 
+function clearReadFail(){
+  READFAIL = '';
+  render();
+}
+
 function readPanel(){
   // This shell is permanent: initial load, extraction and saved results all
   // use the same compact list shown in the reference design.
@@ -4040,7 +4203,25 @@ function readPanel(){
     ? '<div class="cardnote" style="background:#fffbeb;border:1px solid '+
       '#fde68a;border-radius:var(--radius);margin-bottom:14px;color:#92400e">'+
       esc(READERR)+'</div>' : '';
-  return warn + '<div class="filterbar"><div class="fleft">'+
+  // A reading that failed leaves its reason HERE, next to the list the order
+  // just left. It is not an alert: an alert is gone the moment it is dismissed,
+  // and then "it goes to Read and comes back" is the only thing left to report.
+  const fail = READFAIL
+    ? '<div class="readfail" role="alert">'+
+        '<div class="rfh">&#9888; The reading did not finish</div>'+
+        '<div class="rfb">'+esc(READFAIL)+'</div>'+
+        '<div class="rfn">Nothing was saved, so the order is back in the '+
+          'Inbox. Settings &#8594; PO reading has a <b>Test PO reading</b> '+
+          'button that checks the endpoint and the token without spending a '+
+          'PO.</div>'+
+        '<div class="rfacts">'+
+          '<button class="btn sm" onclick="openApiSettings()">Open '+
+            'Settings</button>'+
+          '<button class="linkbtn" onclick="clearReadFail()">'+
+            'Dismiss</button>'+
+        '</div>'+
+      '</div>' : '';
+  return fail + warn + '<div class="filterbar"><div class="fleft">'+
       '<span class="searchbox">'+
         '<input type="search" id="readq" value="'+esc(READQ)+'" '+
           'placeholder="Search file, customer, PO #, Sold-To…" '+
@@ -4053,32 +4234,77 @@ function readPanel(){
     '<div class="card"><div id="rllist">'+readRowsHTML()+'</div></div>';
 }
 
+// Redo on a Read row: the order goes back to the Inbox (2026-11-02).
+//
+// This is the only control that DELETES a reading, which is why it asks first:
+// a reading is one paid API call, and the whole point of this tab is that it is
+// already paid for.
+async function readRedo(btn){
+  const row = btn.closest('.rlrow');
+  if (!row) return;
+  const k = row.dataset.key;
+  const i = k.indexOf(':');
+  const id = +k.slice(0, i), index = +k.slice(i + 1);
+  const info = readListRows().find(r => r.id + ':' + r.index === k) || {};
+  const what = info.subject || info.name || ('PO ' + (info.po_number || ''));
+  if (!confirm('Send this PO back to the Inbox?\\n\\n' + what +
+      '\\n\\nThe saved reading is deleted, so Extract will read the document ' +
+      'again (one Claude API call). An Order Upload already written for it ' +
+      'stays on disk and leaves Output.')) return;
+  btn.disabled = true;
+  btn.classList.add('working');
+  btn.innerHTML = '<span class="spin"></span>';
+  let r;
+  try {
+    r = await api('/api/read_forget', {id: id, index: index});
+  } catch (e){
+    r = {error: 'Could not reach OrderFlow: ' +
+      (e && e.message ? e.message : e)};
+  }
+  if (r.error){
+    btn.disabled = false;
+    btn.classList.remove('working');
+    btn.innerHTML = 'Redo';
+    alert(r.error);
+    return;
+  }
+  delete READOPEN[k];
+  delete READDETAIL[k];
+  delete READOVERRIDE[k];
+  delete ROWFMT[k];             // back in the Inbox: the choice goes with it
+  READROWS = null;
+  // Both registers changed: the row left Read and joined the Inbox (and, if it
+  // had a file, it left Output too).
+  await load();
+  await loadReads(true);
+  ITAB = 1;
+  MAILPAGE = 0;
+  render();
+  toast('Back in the Inbox — ' + (r.name || what));
+}
+
 // Write one file per ticked version, straight from a reading that already
 // exists. The reading is cached, so /api/action finds it and does NOT pay for
 // the document twice.
+//
+// Read -> Output works the same way Inbox -> Read does (2026-11-02): the row
+// leaves this list, and the Output tab shows a placeholder where the finished
+// row will land, so the waiting happens on the screen the result belongs to.
 async function readOutput(btn){
   const row = btn.closest('.rlrow');
   if (!row) return;
   const k = row.dataset.key;
   const i = k.indexOf(':');
   const id = +k.slice(0, i), index = +k.slice(i + 1);
-  // The switch only records the configuration; this button is what writes.
-  // It reads the ticks off THIS row's switch, not the global state, so two
-  // rows can be set up differently before either is generated.
-  const fmts = [];
-  row.querySelectorAll('.segopt input:checked').forEach(x => {
-    const f = x.dataset.fmt === 'simple' ? 'simple' : 'full';
-    if (fmts.indexOf(f) < 0) fmts.push(f);
-  });
-  const want = normFmts(fmts);
-  const seg = row.querySelector('.seg');
-  const label = btn.innerHTML;
-  btn.disabled = true;
-  btn.classList.add('working');
-  btn.innerHTML = '<span class="spin"></span>Writing…';
-  if (seg) seg.classList.add('busy');
-  toast(want.length > 1 ? 'Writing '+want.length+' Order Upload files…'
-                        : 'Writing the Order Upload file…', true);
+  // This ROW's ticks, not the desk default (2026-11-02): two orders can be
+  // written in different versions, and nothing ticked means nothing to write -
+  // say so and stay put rather than quietly falling back to "full".
+  const want = rowFmts(k);
+  if (!want.length){
+    toast('Choose Full or Simple before generating');
+    return;
+  }
+  const info = readListRows().find(r => r.id + ':' + r.index === k) || {};
   const snap = rowSnapshot(id, index);
   const edited = READOVERRIDE[k] || {};
   const party = edited.party || {};
@@ -4088,69 +4314,256 @@ async function readOutput(btn){
     ship: snap.ship || {},
     read_override: {header: edited.header || {}, orders: edited.orders || {},
                     records: edited.records || {}}};
+  // The in-flight row, in the destination list, from the moment the click
+  // lands - the same contract `pendingReadRow()` gives the Read tab.
+  OUTPEND = {key: k, id: id, index: index, fmts: want,
+    name: info.name || '', subject: info.subject || '',
+    customer: info.customer || '', sold_to_name: info.sold_to_name || '',
+    po_number: info.po_number || '', lines: info.lines || 0,
+    rdd: info.rdd || '', files: []};
+  ITAB = 3;
+  MAILPAGE = 0;
+  render();
   let r;
   try {
     r = await api('/api/action', body);
   } catch (e){
-    // The button is the only sign that anything is happening: leaving it
-    // spinning on a dropped connection would block the row for good.
+    // The placeholder is the only sign that anything is happening: leaving it
+    // there on a dropped connection would block the tab for good.
     r = {error: 'Could not reach OrderFlow: ' +
       (e && e.message ? e.message : e)};
-  } finally {
-    hideToast();
-    btn.disabled = false;
-    btn.classList.remove('working');
-    btn.innerHTML = label;
-    if (seg) seg.classList.remove('busy');
   }
-  if (r.error){ alert(r.error); return; }
+  OUTPEND = null;
+  if (r.error){
+    // Nothing was written, so the order is still a reading: go back to it
+    // rather than leave the user on a tab that cannot show the failure - and
+    // leave the reason on the tab the row is on.
+    ITAB = 2;
+    READFAIL = r.error;
+    render();
+    return;
+  }
   delete READOPEN[k];
   delete READDETAIL[k];
   delete READOVERRIDE[k];
-  const made = (r.files || []).filter(f => f && f.url);
-  // Same landing as the preview's Generate: the artifact and the register of
-  // artifacts are one screen, and this row has just joined that register. A
-  // toast alone left the user on a list the order had already left.
-  LASTFILES = made.length ? {files: made}
-    : (r.url ? {files: [{fmt: want[0], name: r.name || 'Order Upload',
-                         url: r.url}]} : null);
-  ITAB = 3;
-  MAILPAGE = 0;
+  delete ROWFMT[k];             // that order is written; the next one starts clean
+  OUTFRESH = k;                 // tint the row that just landed
+  READROWS = null;
+  await load();
+  await loadReads(true);
   render();
+  const made = (r.files || []).filter(f => f && f.url);
   toast('Written: '+(made.length > 1
       ? made.map(f => f.name).join(' + ')
-      : (r.name || 'Order Upload'))+' — in Output');
-  await load();
-  READROWS = null;
-  loadReads();
+      : (r.name || (made[0] && made[0].name) || 'Order Upload'))+' — in Output');
 }
 
-// The banner at the top of Output, right after Generate: the file(s) exist and
-// the row has just joined the list underneath, so this is both the download and
-// the confirmation. It sits HERE rather than over the Inbox because the Output
-// tab is where the row went - putting it over the Inbox meant looking for the
-// file in a list that no longer contained the order (2026-10-28).
+// ── Tab 3: what has been WRITTEN ────────────────────────────────────────────
+// Simplified 2026-11-02, at the user's request: the screen used to be a green
+// "generated" banner stacked on the nine-column Completed table, so the same
+// order was described twice and the download lived away from the row it
+// belonged to. What is left is one row per written order - the subject it came
+// from, the PO, its R.D.D, a Download per file and Redo. The full table (with
+// Mark uploaded and the ERP column) is still on the Completed screen, which is
+// where "what did we do this week" is answered.
 //
-// Both versions ticked means two files, so every one of them gets its own
-// download button - a single "Download" over a list of two would hand back
-// whichever happened to be first.
-function outBanner(){
-  const files = (LASTFILES && LASTFILES.files) || [];
-  if (!files.length) return '';
-  return '<div class="card" style="border-color:#bbf7d0; background:#f0fdf4; '+
-    'margin-bottom:14px">'+
-    '<div class="cardbody" style="padding:14px 18px; display:flex; '+
-    'align-items:center; gap:12px; flex-wrap:wrap">'+
-    '<b style="color:#166534">&#10003; Order Upload generated</b>'+
-    '<span class="muted" style="font-size:13px">'+
-      (files.length > 1 ? files.length+' files' : esc(files[0] ? files[0].name : ''))+
-    '</span>'+
-    '<span class="spacer" style="flex:1"></span>'+
-    files.map(f => fmtChip(f.fmt)+'<a class="btn" href="'+esc(f.url)+
-      '" download title="'+esc(f.name)+'">Download '+
-      esc(f.fmt === 'simple' ? 'simple' : 'full form')+'</a>').join('')+
-    '<button class="linkbtn" onclick="LASTFILES=null;render()">Dismiss</button>'+
+// Both registers are the same rows: a reading IS an output once its status is
+// Done, so Output is the Read list filtered the other way - same markup, same
+// column order, so moving between the two tabs does not re-teach the eye.
+let OUTPEND = null;   // the write in flight, shown in OUTPEND's own row
+let OUTFRESH = '';    // the key that just landed, tinted green for one render
+let OUTQ = '';
+let OUTT = null;
+
+function outFiles(r){
+  const out = [];
+  [['erp_file', 'full'], ['erp_file2', 'simple']].forEach(p => {
+    const f = r[p[0]];
+    if (!f) return;
+    const base = String(f).split(/[\\/]/).pop();
+    out.push({
+      name: base,
+      // The file name says which version it is (the simple sheet is written as
+      // OrderUploadSimple_...), so the row never has to guess.
+      fmt: /^OrderUploadSimple/i.test(base) ? 'simple' : p[1],
+      url: '/download/' + encodeURIComponent(base)
+    });
+  });
+  return out;
+}
+
+function outRows(){
+  return (READROWS || []).filter(r => r.done)
+    .sort((a, b) => String(b.read_at || '').localeCompare(String(a.read_at || '')));
+}
+
+function outMatch(r){
+  const q = (OUTQ || '').trim().toLowerCase();
+  if (!q) return true;
+  return [r.subject, r.name, r.customer, r.po_number, r.sold_to_name,
+          r.sold_to, r.rdd].join(' ').toLowerCase().indexOf(q) >= 0;
+}
+
+function outRowHTML(r){
+  const k = r.id + ':' + r.index;
+  const files = outFiles(r);
+  const subj = r.subject || r.name || ('PO ' + (r.po_number || ''));
+  const who = r.sold_to_name || r.sold_to || '';
+  return '<div class="outrow' + (OUTFRESH === k ? ' fresh' : '') +
+      '" data-key="' + k + '">' +
+    '<div class="omain">' +
+      '<span class="rlcar"></span>' +
+      '<div class="rldoc">' +
+        '<div class="rlfname" title="' + esc(subj) + '">' + esc(subj) + '</div>' +
+        '<div class="rlmeta">' + esc(r.name || '') +
+          (r.lines ? ' &middot; ' + r.lines + ' line' +
+            (r.lines === 1 ? '' : 's') : '') + '</div>' +
+      '</div>' +
+      '<div class="rldoc">' +
+        '<div class="rlfname mono" title="PO ' + esc(r.po_number || '') + '">' +
+          esc(r.po_number || '&mdash;') + '</div>' +
+        '<div class="rlmeta" title="' + esc(who) + '">' +
+          (who ? esc(who) : '&mdash;') + '</div>' +
+      '</div>' +
+      '<div class="rlcell">' +
+        (r.rdd ? esc(r.rdd) : '<span class="muted">&mdash;</span>') + '</div>' +
+      '<div class="outacts">' +
+        (files.length
+          ? files.map(f => '<a class="btn sm dl" href="' + esc(f.url) +
+              '" download title="Download ' + esc(f.name) + '">&#8681; ' +
+              esc(files.length > 1
+                    ? (f.fmt === 'simple' ? 'Simple' : 'Full')
+                    : 'Download') + '</a>').join('')
+          : '<span class="muted">no file</span>') +
+        '<button class="btn sm redo" ' +
+          'title="Redo — undo the write and send this PO back to Read. The ' +
+          'reading is kept, so Generate can write it again without re-reading." ' +
+          'onclick="outRedo(this)">Redo</button>' +
+      '</div>' +
     '</div></div>';
+}
+
+function outPendingHTML(){
+  const p = OUTPEND;
+  if (!p) return '';
+  const subj = p.subject || p.name || 'Writing the Order Upload…';
+  return '<div class="outrow pend" data-key="' + esc(p.key) + '">' +
+    '<div class="omain">' +
+      '<span class="rlcar"></span>' +
+      '<div class="rldoc">' +
+        '<div class="rlfname" title="' + esc(subj) + '">' + esc(subj) + '</div>' +
+        '<div class="rlmeta">' + esc(p.name || '') + ' &middot; writing ' +
+          (p.fmts.length > 1 ? p.fmts.length + ' files' : 'the file') +
+          '&hellip;</div>' +
+      '</div>' +
+      '<div class="rldoc">' +
+        '<div class="rlfname mono">' + esc(p.po_number || '&mdash;') + '</div>' +
+        '<div class="rlmeta">' + esc(p.sold_to_name || p.customer || '') +
+          '</div>' +
+      '</div>' +
+      '<div class="rlcell">' + esc(p.rdd || '&mdash;') + '</div>' +
+      '<div class="outacts">' +
+        '<ul class="wave-menu" role="status" aria-label="Writing the file" ' +
+          'title="Writing the Order Upload…">' +
+          '<li></li><li></li><li></li><li></li><li></li><li></li>' +
+          '<li></li><li></li><li></li></ul>' +
+      '</div>' +
+    '</div></div>';
+}
+
+function outListHTML(){
+  const all = outRows().filter(outMatch);
+  if (!all.length){
+    if (READROWS === null && READLOAD)
+      return '<div class="cardnote">Loading the output register…</div>';
+    if (outRows().length)
+      return '<div class="cardnote">No output matches that search.</div>';
+    return '<div class="empty" style="margin:16px 18px">Nothing has been ' +
+      'written yet. Press <b>Generate</b> on a Read row - the Order Upload ' +
+      'lands here, with its Download button.</div>';
+  }
+  return all.map(outRowHTML).join('');
+}
+
+function outPanel(){
+  if (READROWS === null && !READLOAD) loadReads();
+  const n = outRows().length;
+  return '<div class="filterbar"><div class="fleft">' +
+      '<span class="searchbox">' +
+        '<input type="search" id="outq" value="' + esc(OUTQ) + '" ' +
+          'placeholder="Search subject, PO #…" ' +
+          'oninput="setOutQ(this.value)">' +
+        (OUTQ ? '<button class="clr" onclick="clearOutQ()" ' +
+          'title="Clear">&times;</button>' : '') +
+      '</span>' +
+      '<span class="muted" id="outcount">' + n + ' written</span>' +
+    '</div></div>' +
+    '<div class="card"><div id="outlist">' +
+      outPendingHTML() + outListHTML() + '</div></div>';
+}
+
+// Typing re-filters only the list, never the input (same reason as the Read
+// search: rebuilding the box eats the caret).
+function setOutQ(v){
+  OUTQ = v || '';
+  clearTimeout(OUTT);
+  OUTT = setTimeout(function(){
+    const el = document.getElementById('outlist');
+    if (el) el.innerHTML = outPendingHTML() + outListHTML();
+    const c = document.getElementById('outcount');
+    if (c) c.textContent = outRows().length + ' written';
+  }, 160);
+}
+
+function clearOutQ(){
+  clearTimeout(OUTT);
+  OUTQ = '';
+  const box = document.getElementById('outq');
+  if (box) box.value = '';
+  const el = document.getElementById('outlist');
+  if (el) el.innerHTML = outPendingHTML() + outListHTML();
+  const c = document.getElementById('outcount');
+  if (c) c.textContent = outRows().length + ' written';
+}
+
+// Redo on an Output row: the write is undone, the reading stays.
+async function outRedo(btn){
+  const row = btn.closest('.outrow');
+  if (!row) return;
+  const k = row.dataset.key;
+  const i = k.indexOf(':');
+  const id = +k.slice(0, i), index = +k.slice(i + 1);
+  const info = outRows().find(r => r.id + ':' + r.index === k) || {};
+  if (!confirm('Redo this order?\\n\\n' + (info.po_number
+        ? 'PO ' + info.po_number : (info.subject || info.name || '')) +
+      '\\n\\nThe Order Upload file stays on disk but is no longer listed, and ' +
+      'the order goes back to Read so it can be written again. The reading is ' +
+      'kept, so Generate will not call the API again.')) return;
+  btn.disabled = true;
+  btn.classList.add('working');
+  btn.innerHTML = '<span class="spin"></span>';
+  let r;
+  try {
+    r = await api('/api/action', {id: id, index: index, action: 'unwrite'});
+  } catch (e){
+    r = {error: 'Could not reach OrderFlow: ' +
+      (e && e.message ? e.message : e)};
+  }
+  if (r && r.error){
+    btn.disabled = false;
+    btn.classList.remove('working');
+    btn.innerHTML = 'Redo';
+    alert(r.error);
+    return;
+  }
+  OUTFRESH = '';
+  READROWS = null;
+  await load();
+  await loadReads(true);
+  ITAB = 2;                  // the row is on Read now
+  MAILPAGE = 0;
+  render();
+  toast('Back in Read — press Generate to write it again');
 }
 
 function pagerHTML(total, pages, from, shown){
@@ -7226,6 +7639,11 @@ document.addEventListener('change', function(e){
 });
 
 load();
+// The read register is loaded up front, not when the Read tab is first opened:
+// the INBOX filters on it (a document that has been read lives on Read), so
+// without it the first paint would list orders that are already read and take
+// them away a moment later.
+loadReads();
 
 // Auto-sync runs in the background, so refresh the screen periodically too
 setInterval(() => {

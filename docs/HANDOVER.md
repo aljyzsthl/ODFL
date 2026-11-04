@@ -105,6 +105,38 @@ Two rules that keep it portable, and one that keeps it runnable on Windows:
 - A fresh machine needs `openpyxl` (+ `pywin32` on Windows) — see
   `requirements.txt` — and an auth token before any PO can be read (4.8.1).
 
+### 2.0a Moving the workspace to another PC — run `doctor.py`
+
+**`python doctor.py`** (beside `run_dashboard.bat`) answers "this machine cannot
+read a PO, what is missing?" in one pass, and exits non-zero if anything failed.
+It is read-only: the database is opened `mode=ro`, no writer runs, and the only
+network traffic is the 16-token round trip the Settings screen's **Test PO
+reading** button makes — and only when a token exists.
+
+It exists because of a real report (2026-11-03): the workspace was moved and
+every **Extract** "went to Read, could not be read, and came back to the Inbox".
+That behaviour is **correct** — a failed reading caches nothing, so the row
+returns to the Inbox — but it says nothing about *why*, and the alert that
+carried the reason disappeared with the click that dismissed it. (The Read tab
+now keeps that reason on screen; 4.3a.)
+
+What a moved folder actually loses, in the order that matters:
+
+| Missing | What you see | Fix |
+|---|---|---|
+| `config/settings.json` (token) | Extract fails instantly; row returns to Inbox | paste the token on Settings > PO reading, press **Test PO reading** |
+| the network the endpoint is on | the same symptom, different message ("could not reach … Tunnel / name or service") | VPN / office LAN — the key is fine |
+| `config/ship_to_master.json` and friends | reading works, but F/G and the drop-downs are empty | copy from the old PC, or re-upload the ERP Ship To Locations file |
+| `CodeExtract/material_codes_reference.csv` | every code is published **unconfirmed** (no gate) | copy it — it is the authority for `apply_gate()` |
+| `data/attachments/**`, `data/po_mail.db` kept | "The attachment file is not on this PC" | copy `data/` whole |
+| `config/erp_template.XLSX` | Generate fails on the Full form only (Simple still works) | copy it |
+| an **old** `CodeExtract/claude_config.json` | big POs come back as "the reading was cut off" | `max_tokens` 16000 / ceiling 32000 (4.8.1) |
+| a model id the endpoint does not serve | a bare 400 | `claude-sonnet-5` (or opus-5 / sonnet-4-6 / haiku-4-5) |
+
+⚠️ **Every file in that table is in `.gitignore`.** Copying the folder keeps
+them; `git clone` does not. That is the single most likely cause of a moved
+workspace that suddenly cannot read anything.
+
 ### 2.1 The consolidation, and the six modules
 
 The tree was consolidated on 2026-09-26 and the dashboard split again on
@@ -261,15 +293,16 @@ in both this filter and `run_extractor()`, or it will fail the same way.
 
 **The Inbox is three tabs — Inbox / Read / Output — and they ARE the pipeline**
 (2026-10-28, 4.3a). One `ITAB` decides which is drawn; there is no step bar any
-more. `Extract` on a row sends it to the fixed **Read** list (the row shows a
-waveform in place of Generate while extraction runs), and `Generate` lands in
-**Output** with the file(s) on a banner.
+more. The three lists are **disjoint** (2026-11-02): `Extract` takes the row OUT
+of the Inbox and into the Read list (a waveform sits where Generate will appear
+while the reading runs), and `Generate` takes it out of Read and into Output,
+with its Download on the row.
 
 | Screen | Render function | Notes |
 |---|---|---|
-| Inbox **tab 1** | `inboxList` | POs by date. Status (Not yet/Pending/Done/Rejected/Not a PO), attachment links, **Extract** / **Discard**. Carries the **customer multi-pick** (multi-select tick list), the **Sold-To / Ship-To drop-downs** in columns F/G (6.7.2) with the site's ZIP under the Ship-To one, and the **editable Address** box beside them (6.7.2). The Customer column holds the **domain**. The output format is chosen later, on the preview |
-| Read **tab 2** | `readPanel` | the extraction-cache register (`/api/read_list`), one row per ORDER with its own Full/Simple switch and **Generate**. The list never changes shape: an in-flight synthetic row uses `.wave-menu` where Generate will appear. The first disclosure shows account/address/date fields; its nested **SKU details** disclosure shows line items |
-| Output **tab 3** | `renderCompleted` | **one screen for Completed and Order Upload** (they were the same rows seen from two ends): every confirmed PO of the day, its generated Order Upload file(s) (badged Full form / Simple) and its ERP status, with **Mark uploaded** / **Undo** in the row. `outBanner()` sits on top for the write that just happened |
+| Inbox **tab 1** | `inboxList` | POs by date that are **not read yet**. Status (Not yet/Pending/Done/Rejected/Not a PO), attachment links, **Extract** / **Discard**. Carries the **customer multi-pick** (multi-select tick list), the **Sold-To / Ship-To drop-downs** in columns F/G (6.7.2) with the site's ZIP under the Ship-To one, and the **editable Address** box beside them (6.7.2). The Customer column holds the **domain**. The output format is chosen later, on the Read row |
+| Read **tab 2** | `readPanel` | the extraction-cache register (`/api/read_list`), one row per ORDER: file, **the mail's subject**, Sold-To, read-at, its own Full/Simple switch, **Generate** and **Redo**. The switch is **per row** (2026-11-02, 4.3a) and may be left EMPTY - Generate then refuses with a toast. The list never changes shape: an in-flight synthetic row uses `.wave-menu` where Generate will appear. The first disclosure shows account/address/date fields; its nested **SKU details** disclosure shows line items |
+| Output **tab 3** | `outPanel` | one row per **written** order: subject, PO, R.D.D, **Download** (one per file, badged Full / Simple) and **Redo**. No banner, no table - the artifact sits on its own row. The full table (ERP column, **Mark uploaded**, the day's date filter) is still the **Completed** screen, `renderCompleted` |
 | Discarded | `renderNotMyPO` | non-PO mail (`excluded=1`), with **Rescue** to put one back |
 | **Quick Convert** | `renderQuick` | drop a PO file → code/qty/unit cost only → Order Upload; the same Full/Simple switch plus a Domain / Sold-To / Ship-To picker on the review card (only when Simple is not the only version — the simple sheet has no account columns) |
 | Customer Master | `renderMaster` | the **upload card** (ERP Ship To Locations → rebuild the table) + the **editable grid** over `config\ship_to_master.json`: a search box, Prev/Next paging, Export split button, and one `<input>` per cell that saves on blur. Conflicting `(Sold-To, Ship-To)` rows are **red** with a legend under the table. **+ Add row**, **Re-match stored mail**, **Clear all**. Then the Unmatched Domains card. All 15 columns come from `DATA.schemas` via the dashboard's `ship_columns` — the grid and the upload template can never drift |
@@ -488,6 +521,9 @@ extract_material_codes(pdf_path, force=False, customer_name="", progress_callbac
 ├─ _call()            POST /v1/messages, forced tool_choice -> JSON line items
 │     system prompt : the nine rules + the forced tool schema (4.3)
 │     retries       : 429 / 500 / 502 / 503 / 529, three attempts
+│     truncation    : stop_reason == max_tokens -> one retry at DOUBLE the
+│                     output budget (up to max_tokens_ceiling), then a refusal
+│                     that names the budget instead of an empty document
 │
 └─ _finalise()
       ├─ _records_from()   payload -> records, _clean_num() on every figure
@@ -518,7 +554,7 @@ pinned down twice, and both halves live in `claude_engine.py`:
    paragraph. The reply is `orders[]`, one entry per PO in the document (4.7.1),
    each with `po_number`, `document_total`, `po_date`, `rdd`, `ship_to` and
    `lines[]` of `material_code / description / quantity / unit / unit_price /
-   amount / po_line / page / source_line`.
+   amount / sales_tax / po_line / page / source_line`.
 
 Both halves are part of `config_signature()`, so editing either one invalidates
 the cache by itself (4.6) — no manual version bump to forget.
@@ -557,22 +593,148 @@ labels they are looking for ("Required Date", "RDD", "ETA Date"; "Ship To",
 which address block are meant, and both prefer an empty string to a guess — the
 same rule 3 the line items follow.
 
+**2026-11-02:** rules 1, 3, 6, 8, 9, 11, 12 and 13 gained the builder
+**work order** case (4.3.1) — a second document family this desk receives, which
+the PO-only wording silently rejected. The rule *count* did not change: each
+addition says what the same rule means on the other paper, so the two families
+cannot drift into two prompts.
+
 The response is a **forced tool call** (`tool_choice`), not prose with JSON in
 it. That is what makes the gate possible: the engine always gets a structured
 payload, or an error — never a paragraph it has to parse.
+
+### 4.3.1 Two document families: a Samsung PO and a builder work order
+
+The desk receives two shapes of paper, and the second one put every rule built
+for the first to the test (2026-11-02).
+
+|  | Samsung PO | Builder work order (KB Home) |
+|---|---|---|
+| order number | next to `P/O #` | `Work order 182555832-2` — beside `Work order date` / `Revision date`, **with its revision suffix**. A bare number under the big "Work order" title (`10028814`) is the customer's own job reference, not the order |
+| where the code lives | its own ITEM ID column | nowhere else but the **first token of the Description cell**: `DSW- L-INST/E3-DW, …`, `DSW-SSI Samsung DW80CG4021SRAA 53 dBA, …` |
+| service SKUs | a coded install row | three rows per appliance: `DSW- Included Dishwasher - Samsung` (0.00, **no code** — a bundled placeholder, not a line), `DSW- L-INST/E3-DW` (the install), `DSW-SSI Samsung DW80CG4021SRAA` (the appliance) |
+| delivery date | `Required Date` / `RDD` in the header | the **first row of the items table**, `1. Requested Delivery Date`, with the value on the line below it: `RDD 11.30.26` |
+| delivery address | a labelled `Ship To` block | unlabelled, under the `Work order` heading: `Parkside II - Edgewood at Peach Avenue/6379/069` (the job and lot) then `5126 E. Atchison Street` / `Fresno, CA 93725-1202` |
+| money | `Unit price` × `Qty` = `Amount` | a **`Sales tax` column**: the printed Amount already includes it, so `qty × price < amount` on every appliance line |
+
+Rules 1, 3, 6, 8, 9, 11, 12 and 13 each carry the work-order case explicitly;
+the same document read by the previous prompt lost the whole thing (no `P/O #`
+to inventory, so nothing looked like an order).
+
+⚠️ **The tax column is not an arithmetic error.** `check_arithmetic()` used to
+compare `qty × price` with the printed Amount and sum `qty × price` against the
+printed total, which raised four alarms on a *correctly* read work order — and
+an alarm that fires on a good document is how the real one gets ignored. The
+printed per-line tax is now part of both comparisons (`sales_tax` in the
+schema), and the total is compared against the printed **amounts** whenever
+every line prints one. Nothing is recomputed: the tax rides along for the check
+and is never published (the ERP form has no tax column).
+
+Dotted dates (`11.30.26`) are a work-order habit and are parsed month-first —
+`_DATE_FORMATS` carried `/` and `-` only, so the R.D.D fell back to
+"PO date + 6 working days", which *looks* like a read date and is not one.
+
+### 4.3.2 A third family: the CMH / Clayton PO (2026-11-03)
+
+A CMH Manufacturing purchase order (Clayton Athens, TX — bill-to and ship-to are
+the same site) breaks a different set of assumptions. Five lines, one page, one
+printed total; it read as five unknown codes.
+
+| | What CMH prints | Why it broke |
+|---|---|---|
+| order number | `PO#: 00952 - 2337110` | `00952` is the buyer's **department** — the vendor block prints it again as `Dept 00952`. The order number is what follows the dash (`2337110`, also the number in the attachment file name). Returning `00952 - 2337110` puts a value in the ERP P/O No column that nothing else in the app agrees with |
+| the code | `Item Number` = `025-00100-00398` (the builder's own part) and **`VIN`** = `RS27T5201SR/AA` (the Samsung model) | a reader takes the column called "Item Number" — five codes the master does not carry → five lines in review. Rule 8 now says a digits-and-hyphens part number is never the code and names the `VIN` column; `apply_gate()` also recovers it (4.4z) |
+| delivery date | `Date Needed: 11/12/2026` | not in rule 12's label list → R.D.D defaulted to PO date + 6 working days |
+| ship-to | `Clayton Athens` / `3429 State Highway 31 - West` / `Athens, TX 75751` | the site name sits on the line the street used to be on; the hyphen inside the street tempts a split |
+| total | `PO Cost` / `PO Total` | rule 11 only listed "Grand total" / "Total" |
+
+Everything else is ordinary: 5 lines, qty 8/8/1/8/8, unit costs with four
+decimals (`1014.0000` — copied as printed, never rounded), `Line Cost`
+`8,112.00 … 2,272.00` summing to `17,581.00`, and a tax column that is a
+**checkbox**, not a figure (`sales_tax` stays empty).
 
 ### 4.3a Extract is two steps: read in place, then generate (2026-10-30)
 
 **The order of work is in the three Inbox tabs — there is no stepper any more.**
 
 ```
-Inbox      the list, filters + search                 → Extract on a row
-Read       the same compact list throughout;          → pick the format, Generate
-           waveform at Generate while reading;
-           level 1 = parties/address/dates,
-           level 2 = SKU line details
-Output     the file(s) on a banner, the row below
+Inbox      not read yet: the list, filters+search    → Extract on a row
+Read       has a reading: file, subject, Sold-To,    → pick the format, Generate
+           read-at, Full/Simple, Generate, Redo
+           (waveform at Generate while reading;
+            level 1 = parties/address/dates,
+            level 2 = SKU line details)
+Output     written: subject, PO, R.D.D,              → Download / Redo
+           one Download per file
 ```
+
+**2026-11-02: the three lists are disjoint.** They used to overlap — a mail that
+had been extracted stayed in the Inbox as well as appearing in Read, so the same
+order could be extracted twice (and paid for twice). What decides membership:
+
+| List | Row is here when |
+|---|---|
+| Inbox | `status !== 'Done'` **and** `/api/read_list` has no reading for `mailId:attachmentIndex` |
+| Read | a reading exists on disk, and the attachment is not Done |
+| Output | a reading exists on disk, and the attachment **is** Done (`done: true`) |
+
+`readKeys()` builds that set from the register plus the in-flight `READING`, and
+`/api/read_list` is therefore fetched at **boot**, not when the Read tab is first
+opened: the Inbox filters on it, so without it the first paint would list orders
+that are already read and take them away a moment later.
+
+**Redo, both ways.** Each screen undoes its own predecessor, and each asks first
+because both change where an order lives:
+- **Read → Inbox** (`readRedo`, `POST /api/read_forget`): the reading is
+  **deleted from disk** — that file IS what keeps the order out of the Inbox, so
+  a flag would leave the row listed and serve the same reading again. The
+  per-attachment `status` / `erp_file` marks are cleared too, or the row would
+  leave Read and reappear in Output. One Claude API call is lost; the document,
+  the mail and any generated Order Upload stay untouched.
+- **Output → Read** (`outRedo`, `POST /api/action {action:'unwrite'}`): the
+  **write** is undone and the reading is kept, so Generate can write it again
+  with no API call. The file stays on disk; it is simply no longer listed.
+
+**Full / Simple is per ROW, and a row may choose nothing** (2026-11-02). The
+switch used to read and write the desk-wide setting: ticking Simple on one order
+saved that setting and re-rendered the page from it, so every row came back
+showing Simple and no two orders could be written in different versions.
+
+- `ROWFMT` (`"mailId:index" -> ['full'] / ['simple'] / both / []`) holds what
+  THIS row chose. Until it is touched `rowFmts(k)` returns `erpFmts()` — the
+  saved default from Settings / Quick Convert — so a row starts where the desk
+  is and then diverges. `toggleRowFmt()` only records; it does not save and does
+  **not** re-render (the thumb follows `:checked` in CSS, and a repaint would
+  drop the row's expand state and caret).
+- **An empty choice is a legal state.** `.seg:not(:has(.segopt input:checked))`
+  fades the thumb out and greys the labels, so "nothing picked" cannot be
+  mistaken for "Full is picked". `readOutput()` then **refuses**: a 2-second
+  toast (`Choose Full or Simple before generating`), no request, no tab change.
+  It must not fall back to the default — the user would get a file the row says
+  was not chosen.
+- The switch is dropped from `ROWFMT` when the order is written or sent back, so
+  the next pass starts from the desk default again.
+- ⚠️ **`toast(msg, true)` is sticky** (spinner, until `hideToast()`), which is
+  right for a running action and wrong for a rejection: `toggleErpFmt`'s "Keep
+  at least one version selected" used to be sticky and nothing ever cleared it,
+  so a spinner sat at the bottom of the page for the rest of the session. Any
+  toast that only explains a click must be non-sticky.
+
+**A failed reading keeps its reason on screen** (2026-11-03). `startReading()`
+and `readOutput()` used to `alert(r.error)` and then put the row back where it
+came from; by the time the alert was dismissed there was nothing left to
+investigate, which is why a moved machine's report was just "it goes to Read and
+comes back". Now:
+
+- `READFAIL` holds the server's own message and `readPanel()` draws it as a
+  `.readfail` card above the list, with **Open Settings** and **Dismiss**. It is
+  cleared by a successful reading, a successful write, or Dismiss.
+- The request is wrapped in `try/catch`: a dropped connection used to leave
+  `READING` set — a waveform that never finishes **and** an order hidden from
+  the Inbox (the in-flight reading counts as read, see above).
+- The message is the server's, not a summary: "no API key stored…", "The
+  attachment file is not on this PC: …", "the reading was cut off…". Each of
+  those is one of the rows in 2.0a, and `doctor.py` names the file behind it.
 
 **2026-10-28: the four-step bar is gone.** It drew the same journey a second
 time, on top of the tabs that already describe it, and the two could disagree
@@ -589,12 +751,23 @@ versus `Inbox / Read / Output`). The state is now just `ITAB`:
   of an empty register.
 - `READOPEN` owns level 1 (Sold-To / Ship-To, address, dates, per-PO header
   data). `READSKU` owns the nested level 2 (`SKU details` and line items).
-- `generateOrder()` writes the file(s), sets `LASTFILES`, switches to
-  `ITAB = 3` and re-renders — `outBanner()` is drawn above the Output list, over
-  the rows the order has just joined.
+- `readOutput()` is the same move one step further on: it sets `OUTPEND`, jumps
+  to `ITAB = 3` **before** the request, and the Output list draws that
+  placeholder as its first row. When the write returns, the placeholder is
+  replaced by the real row (tinted green for one render via `OUTFRESH`). On
+  failure it goes back to `ITAB = 2` and alerts, because nothing was written and
+  the order is still a reading.
 - `cancelReading()` (Cancel on either panel, and the ✕) bumps `PREVIEW_SEQ`,
   clears both states and renders: a slow `/api/order_preview` that lands after
   the user walked away is dropped, not shown.
+
+⚠️ **The old preview page is dead code in this build.** `previewPanel()` /
+`confirmPreview()` / `generateOrder()` are no longer reachable: `startReading()`
+clears `PREVIEW` and `readPanel()` has no PREVIEW branch, so the format choice
+lives on the Read row's switch and the values are edited in the expanded row
+(`readDetailBody`). It is kept for now because removing it is its own change;
+do not "fix" the flow by rendering `PREVIEW` again without also restoring the
+banner it expected.
 
 **The preview is a PAGE, not a dialog** (2026-10-23). It owns the whole Read tab
 while it is open, so the format tiles and the address block have the screen. The
@@ -847,8 +1020,37 @@ two had vanished. Now the two are on screen, amber, unticked, with the reason.
 The safety property is unchanged — the line still needs a human — but the human
 can now see what they are deciding about.
 
-#### 4.4a Exact SKU-prefix suffix completion
+#### 4.4z Which column is the code: the row decides, the master confirms (2026-11-03)
 
+`apply_gate()` has two recoveries, and both have the same shape: a token is
+taken only when **the row itself prints it** AND the Material Code list
+**independently confirms it**.
+
+1. **L-INST** (2026-10-22) — the reader leaves `material_code` empty on an
+   install row; an explicit `L-INST/…` token in that same row is accepted when
+   the master lists it.
+2. **The row's own model, when the answer is a customer part number**
+   (2026-11-03). CMH / Clayton prints the builder's part in a column headed
+   **Item Number** (`025-00100-00398`) and the SAMSUNG MODEL in a column headed
+   **VIN** (`RS27T5201SR/AA`). A reader that answers with the "Item Number"
+   column is answering the question the table appears to ask. So when the
+   returned code is **not** in the master and exactly ONE distinct master code
+   appears anywhere in `source_line`, that code is published and the printed
+   part is kept in `raw_material_code` for audit (`match_type =
+   recovered_row`). Two different master codes in one row means the row does not
+   say which is the order → review, no guessing. A candidate must carry letters
+   AND digits and be ≥6 characters, so `025-00100-00398` can never come back as
+   a code.
+3. The empty-string case is deliberately **not** covered by (2): "a model named
+   in prose is not an order line" (rule 7) stays enforceable, and the test that a
+   row mentioning `RF22A4111SR` in its notes stays blank still passes.
+
+⚠️ (2) rescues a **misread column**, not a hallucinated code: if the reader
+returns a different Samsung model that also exists in the master, the gate has
+nothing to compare it with and publishes it. `source_line` sits beside every row
+in the Read list for exactly that reason.
+
+#### 4.4a Exact SKU-prefix suffix completion
 Before the Product Mapping Table's short-SKU rewrite, `normalise_to_master()`
 now checks the Material Code list itself for one stricter case: the PO code must
 equal, character-for-character (case aside), the complete text before a known
@@ -1120,7 +1322,7 @@ Request shape (`_call`), which is the standard Messages API plus a forced tool:
 
 ```json
 { "model": "claude-sonnet-5",
-  "max_tokens": 8000,
+  "max_tokens": 16000,
   "system": "<the extraction rules>",
   "tools": [{"name": "return_line_items", "input_schema": {...}}],
   "tool_choice": {"type": "tool", "name": "return_line_items"},
@@ -1129,6 +1331,17 @@ Request shape (`_call`), which is the standard Messages API plus a forced tool:
 
 The reply is read from the `tool_use` block's `input`. Forcing a tool is what
 makes the gate possible at all: a prose reply cannot be argued with.
+
+⚠️ **`max_tokens` is an OUTPUT budget and it has to fit the DOCUMENT.** One line
+item costs roughly 100 tokens (nine fields, `source_line` being most of it), so a
+four-PO scan of 88 lines needs ~9,000. The old 8,000 ceiling cut such an answer
+off mid-JSON, and a truncated `tool_use` block arrives with an **empty `input`** —
+indistinguishable from "this document held no line items", which is how a
+perfectly readable 4-PO PDF came back as *No material codes found*
+(2026-10-29). `_call()` therefore reads `stop_reason`: `max_tokens` gets **one
+retry with double the room** (up to `max_tokens_ceiling`), and only then a
+refusal that names the budget. An empty answer with a normal stop reason is still
+a valid "no line items" and stays silent.
 
 Models offered by this endpoint (from the guide). `model` must be one of these
 exactly — anything else is a bare HTTP 400:
@@ -1149,7 +1362,8 @@ missed.
 |---|---|---|
 | `base_url` | `https://seadev-claude.sec.samsung.net:8081` | the endpoint root. `/v1/messages` is appended; a value that already ends in it is trimmed |
 | `model` | `claude-sonnet-5` | must be one of the four above |
-| `max_tokens` | 8000 | headroom for a long PO |
+| `max_tokens` | 16000 | the OUTPUT budget. One line item ≈ 100 tokens, so a four-PO bundle of 88 lines needs ~9,000; 8,000 truncated exactly those |
+| `max_tokens_ceiling` | 32000 | what a retry may grow to when `stop_reason` says the answer was cut off |
 | `timeout_sec` | 180 | one HTTP attempt |
 | `max_pdf_bytes` | 20,000,000 | refuse rather than fail obscurely (request limit is 32 MB / 600 pages) |
 | `max_input_chars` | 200,000 | the recovered-text path (DRM) |

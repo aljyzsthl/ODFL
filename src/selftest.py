@@ -294,7 +294,7 @@ def main_ui():
             ("...and the fixed Read list supplies its in-flight row",
              "function pendingReadRow(){", 1),
             ("the reading state is an indeterminate waveform, not a fake percentage",
-             'class="wave-menu"', 1),
+             'class="wave-menu"', 2),
             ("the Inbox has a search box beside the filters",
              'id="mailq"', 1),
             ("...which matches the fields a person searches by",
@@ -315,7 +315,7 @@ def main_ui():
             ("the format is chosen IN the preview (step 3)",
              "togglePreviewFmt(", None),
             ("completion offers the file it just wrote",
-             "function outBanner(", 1),
+             "function outFiles(", 1),
             # ── The dashboard (2026-10-25) ──────────────────────────────
             # Reports was three lists that nobody read. What replaced it is a
             # completed-PO dashboard: three KPI cards, a 30-day trend, and the
@@ -374,15 +374,77 @@ def main_ui():
             ("...fixed width, so Writing… cannot shove the switch",
              ".genbtn { width:76px;", 1),
             ("...with a spinner and a disabled state while it works",
-             "btn.classList.add('working')", 1),
-            ("...freezing the switch for the same stretch",
-             "seg.classList.add('busy')", 1),
+             "btn.classList.add('working')", 2),
+            # 2026-11-02: Read -> Output is the same move as Inbox -> Read. The
+            # row leaves this list and a placeholder takes its place in the
+            # DESTINATION list, so the waiting happens where the result lands.
+            ("...and the row moves to Output while it writes",
+             "OUTPEND = {key: k", 1),
+            ("...which the Output list draws as its first row",
+             "outPendingHTML() + outListHTML()", 3),
             # Without this the click would bubble to .rlmain and expand the row
             # instead of writing the file.
             ("...and neither control expands its own row",
              'onclick="event.stopPropagation()"', 1),
             ("a reading older than the address capture says so",
              "d.legacy", 1),
+
+            # ── Inbox / Read / Output are three DISJOINT lists (2026-11-02) ──
+            # Extract used to leave the mail in the Inbox: the row stayed where
+            # it was, the Read tab also listed it, and pressing Extract a second
+            # time paid for the same reading twice.
+            ("a document that has been read leaves the Inbox",
+             "m.status !== 'Done' && !isRead(m, seen)", 3),
+            ("...keyed the way the server files it",
+             "function rowAttIndex(m){", 1),
+            ("...and a reading still in flight already counts as read",
+             "if (READING) set[READING.id + ':' + READING.index] = true;", 1),
+            ("the Inbox badge counts what is left, not what has been read",
+             "const n1 = day.filter(m => m.status !== 'Done' && !isRead(m, seen))",
+             1),
+            ("the register loads with the page, because the Inbox filters on it",
+             "loadReads();\n\n// Auto-sync runs in the background", 1),
+            ("a register that lands after the first paint redraws the Inbox",
+             "(ITAB === 1 || ITAB === 2)) render();", 2),
+            ("the Read list carries the mail's subject",
+             '<div class="rlsubj" title="', 1),
+            ("Redo sends a reading back to the Inbox",
+             "async function readRedo(btn){", 1),
+            ("...by deleting it through its own endpoint",
+             "'/api/read_forget'", 1),
+            ("...and asking first, because a reading is a paid API call",
+             "The saved reading is deleted", 1),
+            ("Output reuses the Read row language",
+             "function outRowHTML(r){", 1),
+            ("Output's Redo undoes only the write",
+             "action: 'unwrite'", 1),
+
+            # ── Full / Simple is per Read ROW (2026-11-02) ─────────────────
+            # It used to read and write the desk-wide setting, so ticking
+            # Simple on one order re-rendered every row from it and no two
+            # orders could be written in different versions.
+            ("each Read row keeps its own Full/Simple choice",
+             "let ROWFMT = {};", 1),
+            ("...which is read from the row, not from the saved default",
+             "fn: 'toggleRowFmt'", 1),
+            ("...and survives a repaint", "function rowFmts(k){", 1),
+            ("an empty choice writes nothing and says so",
+             "toast('Choose Full or Simple before generating')", 1),
+            ("...leaving the row where it was", "if (!want.length){", 1),
+            ("...and an empty switch does not look like Full",
+             ".seg:not(:has(.segopt input:checked)) .segthumb { opacity:0; }", 1),
+
+            # ── A failed reading explains itself (2026-11-03) ──────────────
+            # The alert it used to raise was gone the moment it was dismissed,
+            # so a moved machine's only symptom was "it goes to Read and comes
+            # back to the Inbox".
+            ("a failed reading keeps its reason on the tab", "let READFAIL = '';",
+             1),
+            ("...as a card with the message and a way out",
+             'class="readfail" role="alert"', 1),
+            ("...set from the server's own words", "READFAIL = r.error;", 2),
+            ("...and a dropped request counts as a failure, not a stuck row",
+             "Could not reach OrderFlow: ' +", 4),
             # ── The "?" markers (2026-10-26) ───────────────────────────
             # Every explanatory paragraph and field hint became a marker. The
             # words are unchanged; what went is the row they each cost.
@@ -663,8 +725,21 @@ def main_ui():
             # joined, not over the Inbox it left.
             ("Generate sends the user to Output",
              "ITAB = 3;\n  MAILPAGE = 0;\n  render();" in html, ""),
-            ("...with the files in a banner above that list",
-             "LASTFILES ? outBanner() : ''" in html, ""),
+            ("...with each file downloadable from its own row",
+             "'/download/' + encodeURIComponent(base)" in html, ""),
+            ("...and no separate banner above the list", "outBanner" not in html,
+             ""),
+            # A rejection toast explains one click; it must not leave a spinner
+            # parked at the bottom of the page (which is what `toast(x, true)`
+            # does when nothing calls hideToast()).
+            ("no 'keep one version' hint is left stuck on screen",
+             "Keep at least one version selected', true)" not in html, ""),
+            # 2026-11-02: Output is one row per written order, not the
+            # nine-column Completed table: the download belongs on its row.
+            ("Output is a row list, not the Completed table",
+             "if (ITAB === 3) return inboxTabs() + outPanel();" in html, ""),
+            ("...which the Completed screen still has, with the ERP column",
+             "completed:renderCompleted" in html, ""),
             ("...and nothing left over the Inbox",
              "FLOW_STEP === 4" not in html and "doneBanner" not in html, ""),
             ("the button says where it is about to go",
@@ -3507,7 +3582,9 @@ def run_p0():
     check("...and both the switch and the preview cards are multi-select",
           'checkbox" name="' in page            # the seg's inputs, not radios
           and "function togglePreviewFmt(f){" in page
-          and "function fmtSeg(name, extra){" in page)
+          # The third argument is what lets a Read row show its OWN choice
+          # instead of the desk default (2026-11-02).
+          and "function fmtSeg(name, extra, o){" in page)
     check("a row can hold the SECOND generated file",
           "erp_file2" in src
           and '"erp_file2" if which == 2 else "erp_file"' in src)
@@ -3701,6 +3778,37 @@ def run_p3():
     check("saving settings sends the chosen rule",
           "body.po_regex = val('set-poregex')" in page)
 
+    # ---- 2026-11-02: Redo, in both directions ----
+    check("the Read tab's Redo has a route that deletes the reading",
+          '"/api/read_forget"' in srv
+          and "extractor_bridge.forget_reading(" in srv)
+    check("...and clears the per-attachment marks, or the row stays in Output",
+          '"status": "Not yet", "confirmed_at": ""' in srv)
+    check("Output's Redo only undoes the write, keeping the reading",
+          'elif action == "unwrite":' in srv
+          and "leave the reading alone" in srv)
+    check("the read register carries the mail's subject",
+          '"subject": mail.get("subject") or "",' in srv)
+
+    # ---- 2026-11-03: the environment check ----
+    # A workspace moved to another PC loses exactly the files git does not
+    # carry, and the app could only say "the reading failed". `doctor.py` is
+    # the thing that names the missing file or the unreachable endpoint.
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    doctor_path = os.path.join(root, "doctor.py")
+    check("doctor.py sits beside the app, ready to run on the new machine",
+          os.path.isfile(doctor_path))
+    doctor_src = open(doctor_path, encoding="utf-8").read()
+    compile(doctor_src, "doctor.py", "exec")
+    check("...it inspects the token, the round trip and the master data",
+          "api_key()" in doctor_src and "test_connection" in doctor_src
+          and "material_codes_reference.csv" in doctor_src)
+    check("...and the files a git clone does not carry",
+          "config/settings.json" in doctor_src
+          and "config/erp_template.XLSX" in doctor_src)
+    check("...opening the database READ-ONLY, so a check cannot damage it",
+          "mode=ro" in doctor_src)
+
     # ---- 19. corrections are reported again ----
     erp = OF.erp_excel
     res = [{"po_number": "1", "records": [
@@ -3856,11 +3964,12 @@ def run_extract():
         check(f"service SKU {code} is confirmed by the list",
               bb.lookup(code)[0] == code, f"got {bb.lookup(code)}")
 
-    def rec(code, qty="1", price="100.00", amount="100.00"):
+    def rec(code, qty="1", price="100.00", amount="100.00", tax=""):
         return {"material_code": code, "backbone_code": "", "description": "",
                 "source_line": f"{code} {qty} {price}", "category": "",
                 "quantity": qty, "unit": "EA", "unit_price": price,
-                "amount": amount, "po_line": "", "po_number": "1",
+                "amount": amount, "sales_tax": tax, "po_line": "",
+                "po_number": "1",
                 "page": 1, "source_file": "t.pdf", "match_type": "claude"}
 
     # ---- a code the list does not carry is SHOWN but not published --------
@@ -3976,6 +4085,249 @@ def run_extract():
         [rec("RF22A4111SR", "2", "100.00", "200.00")], "300.00")
     check("lines that do not add up to the printed total are reported",
           any("total" in d for d in diags), f"{diags}")
+
+    # ---- 2026-11-02: the builder WORK ORDER (KB Home 182555832-2) ---------
+    # This document is why the prompt and the tax handling changed. It prints
+    # NO item column (the code is the first token of the Description cell), a
+    # per-line Sales tax column whose tax is already inside the Amount, its
+    # delivery date as a table row ("RDD 11.30.26"), and its delivery address
+    # with no "Ship To" label at all. Read correctly, it is 6 lines and zero
+    # warnings; every one of those four shapes used to produce either a lost
+    # line or a false alarm.
+    check("a printed tax column does not make a correct line look wrong",
+          claude_engine.check_arithmetic(
+              [rec("DW80CG4021SRAA", "1", "288.00", "312.05", tax="24.05")],
+              "312.05") == [],
+          f"{claude_engine.check_arithmetic([rec('DW80CG4021SRAA', '1', '288.00', '312.05', tax='24.05')], '312.05')}")
+    check("...and the tax is named in the message when a line really is off",
+          any("+ 5 tax" in d for d in claude_engine.check_arithmetic(
+              [rec("DW80CG4021SRAA", "1", "288.00", "999.00", tax="5")], "")),
+          f"{claude_engine.check_arithmetic([rec('DW80CG4021SRAA', '1', '288.00', '999.00', tax='5')], '')}")
+    check("the total is compared against the printed amounts, not qty x price",
+          claude_engine.check_arithmetic(
+              [rec("A", "1", "80.00", "80.00"),
+               rec("B", "1", "288.00", "312.05", tax="24.05")], "392.05") == [],
+          "the tax-inclusive amounts are what the printed total sums")
+
+    for raw, want in (("11.30.26", "2026-11-30"), ("RDD 11.30.26", "2026-11-30"),
+                      ("30.11.26", "2026-11-30"), ("11.30.2026", "2026-11-30")):
+        check(f"a dotted date {raw!r} -> {want}", claude_engine._as_date(raw) == want,
+              f"got {claude_engine._as_date(raw)!r}")
+    for raw in ("18.25.55832", "1.00", "312.05"):
+        check(f"{raw!r} is not mistaken for a date",
+              claude_engine._as_date(raw) == "",
+              f"got {claude_engine._as_date(raw)!r}")
+
+    wo = {"orders": [{
+        "po_number": "182555832-2", "document_total": "1618.56",
+        "po_date": "2026-09-11", "rdd": "2026-11-30",
+        "ship_to": {"address_lines": ["5126 E. Atchison Street"],
+                    "city": "Fresno", "state": "CA", "postal_code": "93725-1202"},
+        "lines": [
+            {"material_code": "L-INST/E3-DW", "quantity": "1",
+             "unit_price": "80.00", "amount": "80.00", "sales_tax": "",
+             "page": "1", "source_line": "DSW- L-INST/E3-DW, Samsung, "
+             "Dishwasher install with required accessories included 1.00 EA 80.00 80.00"},
+            {"material_code": "DW80CG4021SRAA", "quantity": "1",
+             "unit_price": "288.00", "amount": "312.05", "sales_tax": "24.05",
+             "page": "1", "source_line": "DSW-SSI Samsung DW80CG4021SRAA 53 dBA, "
+             "Hybrid Tub, Flat Handle, Stainless 1.00 EA 288.00 24.05 312.05"},
+            {"material_code": "L-INST/E5-MWO", "quantity": "1",
+             "unit_price": "70.00", "amount": "70.00", "sales_tax": "",
+             "page": "1", "source_line": "MCR- L-INST/E5-MWO, Samsung, "
+             "Microwave install with required accessories included 1.00 EA 70.00 70.00"},
+            {"material_code": "ME16A4021AS/AA", "quantity": "1",
+             "unit_price": "156.00", "amount": "169.03", "sales_tax": "13.03",
+             "page": "1", "source_line": "MCR-SSI Samsung ME16A4021AS/AA 1.6 cu ft, "
+             "300 cfm, 1,000W, Flat Handle, Stainless 1.00 EA 156.00 13.03 169.03"},
+            {"material_code": "L-INST/E5-RANE", "quantity": "1",
+             "unit_price": "60.00", "amount": "60.00", "sales_tax": "",
+             "page": "1", "source_line": "RNG- L-INST/E5-RANE, Samsung, Range "
+             "install with required accessories included - Electric 1.00 EA 60.00 60.00"},
+            {"material_code": "NSI6DG9100SRAA", "quantity": "1",
+             "unit_price": "856.00", "amount": "927.48", "sales_tax": "71.48",
+             "page": "1", "source_line": "RNG-SSI Samsung NSI6DG9100SRAA 6.3 cf "
+             "Induction Slide-In, Self Clean, Stainless 1.00 EA 856.00 71.48 927.48"},
+        ]}]}
+    tmp2 = tempfile.mkdtemp(prefix="ofwo_")
+    try:
+        wres = claude_engine._finalise(wo, "wo.pdf",
+                                       os.path.join(tmp2, "wo.json"), "", "KB HOME")
+        wrec = wres["records"]
+        check("the work order reads as 6 lines: 3 appliances + 3 L-INST services",
+              len(wrec) == 6, f"{[r['material_code'] for r in wrec]}")
+        check("...every one of them confirmed by the Material Code list",
+              all(r["match_type"] == "exact" for r in wrec) and not wres["review"],
+              f"{[(r['material_code'], r['match_type']) for r in wrec]} "
+              f"review={wres['review']}")
+        check("...including the three L-INST service SKUs, spelled as printed",
+              [r["material_code"] for r in wrec if "L-INST" in r["material_code"]]
+              == ["L-INST/E3-DW", "L-INST/E5-MWO", "L-INST/E5-RANE"],
+              f"{[r['material_code'] for r in wrec]}")
+        check("...and the <prefix>-SSI form loses its store segment",
+              "DW80CG4021SRAA" in [r["material_code"] for r in wrec]
+              and "ME16A4021AS/AA" in [r["material_code"] for r in wrec]
+              and "NSI6DG9100SRAA" in [r["material_code"] for r in wrec],
+              f"{[r['material_code'] for r in wrec]}")
+        check("the work-order number keeps its revision suffix",
+              wres["po_number"] == "182555832-2", wres["po_number"])
+        check("the RDD printed as a table row is read, not defaulted",
+              wres["rdd"] == "2026-11-30" and wres["rdd_defaulted"] is False,
+              f"{wres['rdd']} defaulted={wres['rdd_defaulted']}")
+        check("the unlabelled delivery address under the WO heading is used",
+              (wres["ship_to_address"], wres["ship_to_city"],
+               wres["ship_to_region"], wres["ship_to_zip"])
+              == ("5126 E. Atchison Street", "Fresno", "CA", "93725-1202"),
+              f"{wres['ship_to_address']!r} {wres['ship_to_city']!r} "
+              f"{wres['ship_to_zip']!r}")
+        check("a correctly read work order raises NO diagnostic at all",
+              wres["diagnostics"] == [], f"{wres['diagnostics']}")
+    finally:
+        shutil.rmtree(tmp2, ignore_errors=True)
+
+    # The prompt is the only place these shapes can be taught - the parser
+    # cannot see a description cell.
+    prompt = claude_engine._SYSTEM
+    for label, needle in (
+            ("the prompt knows an order number may be a WORK ORDER", "WORK ORDER"),
+            ("...and takes the one beside the dates, with its revision suffix",
+             "Work order 182555832-2"),
+            ("...and skips the 'Included' bundle row", "Included Dishwasher"),
+            ("...and reads <prefix>-SSI Samsung <MODEL>", "DSW-SSI Samsung"),
+            ("...and reads the RDD printed as a table row", "RDD 11.30.26"),
+            ("...and finds the address with no Ship To label", "Parkside"),
+            ("...and keeps the printed tax out of the unit price",
+             "sales_tax"),
+            ("...naming the tax column of the Amount", "already INCLUDES")):
+        check(label, needle in prompt, "missing from _SYSTEM")
+    check("the line schema asks for the per-line tax",
+          "sales_tax" in str(claude_engine._ORDER_SCHEMA["properties"]["lines"]))
+    check("the request itself warns that the document may be a work order",
+          "builder WORK ORDER" in claude_engine._USER_PDF)
+
+    # ── 2026-11-03: the CMH / Clayton PO ────────────────────────────────────
+    # `PO#: 00952 - 2337110`, five appliance rows whose "Item Number" column is
+    # the builder's own part (025-00100-00398) and whose SAMSUNG MODEL sits in
+    # a column headed "VIN", `Date Needed:` for the RDD, and a ship-to block
+    # that starts with the site name. It read as five unknown codes.
+    cmh_rows = [
+        ("025-00100-00398", "REFER 27CF SIDE-X-SIDE ICE & WATER SS ESTAR",
+         "RS27T5201SR/AA", "8", "1014.0000", "8,112.00"),
+        ("025-00200-00272", "RANGE ELE 6.3CF OVEN CAP CONVEC/AIRFRY SS FPR WIF",
+         "NE63D6511SR/AA", "8", "618.0000", "4,944.00"),
+        ("025-00210-00118", "RANGE GAS 6.0CF FREESTANDING SS INTEGRATED GRIDDLE",
+         "NX60A6111SS/AA", "1", "581.0000", "581.00"),
+        ("025-00300-01150", "MICROWAVE OTR 2.1CF 400 CFM 1,000W POCKET HDLE SS",
+         "ME21DG6300SRAA", "8", "209.0000", "1,672.00"),
+        ("025-00400-00060", 'DISHWASHER 24" HYBRID TUB FLAT HANDLE SS',
+         "DW80CG4021SRAA", "8", "284.0000", "2,272.00"),
+    ]
+
+    def cmh_line(code, n, part, desc, model, qty, unit, amt):
+        return {"material_code": code, "description": desc, "quantity": qty,
+                "unit": "EA", "unit_price": unit, "amount": amt,
+                "sales_tax": "", "po_line": str(n), "page": "1",
+                "source_line": "%d %s %s %s %s EA %s %s"
+                               % (n, part, desc, model, qty, unit, amt)}
+
+    cmh = {"orders": [{
+        "po_number": "2337110", "document_total": "17,581.00",
+        "po_date": "2026-11-03", "rdd": "2026-11-12",
+        "ship_to": {"name": "Clayton Athens",
+                    "address_lines": ["3429 State Highway 31 - West"],
+                    "city": "Athens", "state": "TX",
+                    "postal_code": "75751"},
+        "lines": [cmh_line(m[2], n, *m) for n, m in
+                  enumerate(cmh_rows, 1)]}]}
+    tmp3 = tempfile.mkdtemp(prefix="ofcmh_")
+    try:
+        cres = claude_engine._finalise(cmh, "1e16bc48_2337110.pdf",
+                                       os.path.join(tmp3, "c.json"), "", "CMH")
+        crec = cres["records"]
+        check("the CMH PO reads as its 5 appliance lines", len(crec) == 5,
+              f"{[(r['material_code'], r['match_type']) for r in crec]}")
+        check("...every one confirmed by the Material Code list",
+              all(r["match_type"] == "exact" for r in crec) and not cres["review"],
+              f"{[(r['material_code'], r['match_type']) for r in crec]}")
+        check("...and the order number is the part after the department",
+              cres["po_number"] == "2337110", cres["po_number"])
+        check("'Date Needed' is read as the R.D.D, not defaulted",
+              cres["rdd"] == "2026-11-12" and cres["rdd_defaulted"] is False,
+              f"{cres['rdd']} defaulted={cres['rdd_defaulted']}")
+        check("...and the ship-to keeps the site name out of the street",
+              (cres["ship_to_name"], cres["ship_to_address"],
+               cres["ship_to_city"], cres["ship_to_region"],
+               cres["ship_to_zip"])
+              == ("Clayton Athens", "3429 State Highway 31 - West", "Athens",
+                  "TX", "75751"),
+              f"{cres['ship_to_name']!r} {cres['ship_to_address']!r} "
+              f"{cres['ship_to_city']!r}")
+        check("the 5 lines add up to the printed PO total",
+              cres["orders"][0]["diagnostics"] == [],
+              f"{cres['orders'][0]['diagnostics']}")
+    finally:
+        shutil.rmtree(tmp3, ignore_errors=True)
+
+    # ...and the safety net: a reader that answers with the builder's part
+    # number must not cost the order. The row prints one model, the list knows
+    # it, so the gate takes it - and keeps the printed part for audit.
+    part_rec = rec("025-00100-00398", "8", "1014.0000", "8,112.00")
+    part_rec["source_line"] = ("1 025-00100-00398 REFER 27CF SIDE-X-SIDE ICE & "
+                               "WATER SS ESTAR RS27T5201SR/AA 8 EA 1014.0000 "
+                               "8,112.00")
+    kept, review = claude_engine.apply_gate([part_rec], bb, "c.pdf", "2337110")
+    check("a customer part number is not a material code",
+          bb.lookup("025-00100-00398")[0] == "", "it is in the list?")
+    check("...but the model printed on the SAME row rescues the line",
+          len(kept) == 1 and kept[0]["backbone_code"] == "RS27T5201SR/AA"
+          and kept[0]["match_type"] == "recovered_row" and not review,
+          f"{kept} review={review}")
+    check("...and the printed part number is kept for audit",
+          kept[0].get("raw_material_code") == "025-00100-00398",
+          f"{kept[0].get('raw_material_code')!r}")
+
+    two = rec("025-00100-00398", "1", "10.00", "10.00")
+    two["source_line"] = ("025-00100-00398 KIT RS27T5201SR/AA OR NE63D6511SR/AA "
+                          "1 EA 10.00 10.00")
+    kept, review = claude_engine.apply_gate([two], bb, "c.pdf", "1")
+    check("two models in one row means the row does not say which - review",
+          kept[0]["material_code"] == "025-00100-00398"
+          and kept[0].get("needs_review") and review,
+          f"{kept} review={review}")
+
+    prompt_cmh = claude_engine._SYSTEM
+    for label, needle in (
+            ("the prompt refuses a digits-and-hyphens customer part number",
+             "025-00100-00398"),
+            ("...and names the column the model hides in", '"VIN"'),
+            ("...and the CMH number's department prefix", "Dept 00952"),
+            ("...and 'Date Needed' as an R.D.D label", "Date Needed"),
+            ("...and the site name above the street", "Clayton Athens")):
+        check(label, needle in prompt_cmh, "missing from _SYSTEM")
+
+    # ---- 2026-11-02: Redo really deletes the reading ----------------------
+    # What keeps an order out of the Inbox is the PRESENCE of a reading on
+    # disk, so "send it back" has to remove the file. Clearing a flag would
+    # leave the row in Read and serve the same reading on the next Extract.
+    import pathlib
+    import orderflow as _OF
+    cache_dir = tempfile.mkdtemp(prefix="ofredo_")
+    old_dir = claude_engine.CACHE_DIR
+    try:
+        claude_engine.CACHE_DIR = pathlib.Path(cache_dir)
+        probe = "/somewhere/PO 987654.pdf"
+        p = claude_engine.get_cache_path(probe)
+        claude_engine.save_cache(p, {"po_number": "987654", "records": []})
+        check("the reading is on disk before Redo", p.exists(), str(p))
+        check("Redo deletes it",
+              _OF.extractor_bridge.forget_reading(_OF.load_settings(), probe)
+              is True and not p.exists())
+        check("...and reports nothing to delete the second time",
+              _OF.extractor_bridge.forget_reading(_OF.load_settings(), probe)
+              is False)
+    finally:
+        claude_engine.CACHE_DIR = old_dir
+        shutil.rmtree(cache_dir, ignore_errors=True)
 
     # ---- the result dict keeps the shape the dashboard reads --------------
     payload = {"po_number": "4512", "document_total": "300.00",
@@ -4282,6 +4634,68 @@ def run_extract():
               not any(b.get("type") == "image" for b in blocks))
     finally:
         shutil.rmtree(rendered, ignore_errors=True)
+
+    # ---- the OUTPUT budget: a cut-off answer is retried, not read as empty
+    # 2026-10-29: a 4-PO bundle of 88 lines needed ~9,000 output tokens, the old
+    # 8,000 ceiling cut it off, and a truncated tool_use block arrives with an
+    # EMPTY `input` - which looked exactly like "the document held no line
+    # items". These pin the two halves of the fix: retry with more room, and
+    # refuse loudly at the ceiling instead of returning {}.
+    check("the default output budget fits a multi-PO bundle",
+          claude_engine.DEFAULTS["max_tokens"] >= 16000
+          and claude_engine.DEFAULTS["max_tokens_ceiling"]
+          > claude_engine.DEFAULTS["max_tokens"],
+          f'{claude_engine.DEFAULTS["max_tokens"]} / '
+          f'{claude_engine.DEFAULTS["max_tokens_ceiling"]}')
+
+    calls = []
+
+    def _scripted(answers):
+        def _fake_post(payload, cfg, **_kw):
+            calls.append(payload.get("max_tokens"))
+            return answers[min(len(calls) - 1, len(answers) - 1)]
+        return _fake_post
+
+    old_post = claude_engine._post
+    try:
+        calls.clear()
+        claude_engine._post = _scripted([
+            {"content": [{"type": "tool_use", "input": {}}],
+             "stop_reason": "max_tokens", "usage": {"output_tokens": 9000}},
+            {"content": [{"type": "tool_use",
+                          "input": {"orders": [{"po_number": "A"}]}}],
+             "stop_reason": "tool_use"}])
+        got = claude_engine._call([{"type": "text", "text": "x"}],
+                                  dict(claude_engine.DEFAULTS))
+        check("a truncated answer is retried with double the budget",
+              len(calls) == 2 and calls[1] == calls[0] * 2, str(calls))
+        check("...and the second answer is the one used",
+              (got.get("orders") or [{}])[0].get("po_number") == "A", str(got))
+
+        calls.clear()
+        claude_engine._post = _scripted([
+            {"content": [{"type": "tool_use", "input": {}}],
+             "stop_reason": "max_tokens", "usage": {"output_tokens": 32000}}])
+        try:
+            claude_engine._call([{"type": "text", "text": "x"}],
+                                dict(claude_engine.DEFAULTS))
+            check("a reading cut off at the ceiling is an error",
+                  False, "no error raised")
+        except RuntimeError as e:
+            check("a reading cut off at the ceiling is an error",
+                  "cut off" in str(e), str(e))
+        check("...and it stops at the ceiling instead of looping",
+              max(calls) == claude_engine.DEFAULTS["max_tokens_ceiling"],
+              str(calls))
+
+        claude_engine._post = _scripted([
+            {"content": [], "stop_reason": "end_turn"}])
+        got = claude_engine._call([{"type": "text", "text": "x"}],
+                                  dict(claude_engine.DEFAULTS))
+        check("an empty answer with a normal stop reason is not an error",
+              got == {}, str(got))
+    finally:
+        claude_engine._post = old_post
 
     print("=" * 68)
     print("PO extraction - gate, values, cache")
@@ -4692,7 +5106,9 @@ def run_multipo():
     check("...required, so a single-order document still answers in it",
           claude_engine._TOOL["input_schema"]["required"] == ["orders"])
     check("...one entry per DISTINCT order, said in the prompt",
-          "DISTINCT PURCHASE ORDER" in claude_engine._SYSTEM)
+          "one entry in `orders` per DISTINCT ORDER" in claude_engine._SYSTEM)
+    check("...counting a WORK ORDER number as an order number",
+          "a WORK ORDER number" in claude_engine._SYSTEM)
     check("...and which order a line belongs to (the nearest header above)",
           "nearest one ABOVE" in claude_engine._SYSTEM)
     check("...first inventories every page before extracting lines",
